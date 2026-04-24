@@ -415,8 +415,7 @@ class SpectrometerGui(GuiBase):
 
 
     def get_settings(self):
-        self.update_temperature()
-        print('Updating values')
+        self.update_temperature()        
         self._mw.settings_widget.camera_cooler_toggle.setChecked(self._spectrometer_logic().camera_cooler_on)
         self._mw.settings_widget.exposure_time_set.setValue(float(self._spectrometer_logic().exposure_time))
         self._mw.settings_widget.central_wavelength_set.setValue(float(self._spectrometer_logic().wavelength))
