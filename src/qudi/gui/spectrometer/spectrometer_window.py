@@ -29,19 +29,26 @@ from PySide2 import QtGui
 
 from qudi.util.paths import get_artwork_dir
 from qudi.util.widgets.advanced_dockwidget import AdvancedDockWidget
-# Ensure specialized QMainWindow widget is reloaded as well when reloading this module
-try:
-    importlib.reload(settingsdialog)
-except NameError:
-    import qudi.gui.spectrometer.settingsdialog as settingsdialog
-try:
-    importlib.reload(control_widget)
-except NameError:
-    import qudi.gui.spectrometer.control_widget as control_widget
-try:
-    importlib.reload(data_widget)
-except NameError:
-    import qudi.gui.spectrometer.data_widget as data_widget
+if True:
+    # Ensure specialized QMainWindow widget is reloaded as well when reloading this module
+    #try:
+    #    importlib.reload(settingsdialog)
+    #except NameError:
+    #    import qudi.gui.spectrometer.settingsdialog as settingsdialog
+    try:
+        importlib.reload(control_widget)
+    except NameError:
+        import qudi.gui.spectrometer.control_widget as control_widget
+    try:
+        importlib.reload(data_widget)
+    except NameError:
+        import qudi.gui.spectrometer.data_widget as data_widget
+    try:
+        importlib.reload(settings_widget)
+    except NameError:
+        import qudi.gui.spectrometer.settings_widget as settings_widget
+else:
+    from qudi.gui.spectrometer import settingsdialog, control_widget,data_widget, settings_widget
 
 
 class SpectrometerMainWindow(QtWidgets.QMainWindow):
@@ -56,8 +63,16 @@ class SpectrometerMainWindow(QtWidgets.QMainWindow):
         icon_path = os.path.join(get_artwork_dir(), 'icons')
 
         # Create control central widget
+        central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(central_widget)
+        central_layout = QtWidgets.QVBoxLayout()
+        central_widget.setLayout(central_layout)
+
+        self.settings_widget = settings_widget.SpectrometerSettingsWidget()
+        central_layout.addWidget(self.settings_widget)
+        
         self.control_widget = control_widget.SpectrometerControlWidget()
-        self.setCentralWidget(self.control_widget)
+        central_layout.addWidget(self.control_widget)
 
         # Create data dockwidget
         self.data_widget = data_widget.SpectrometerDataWidget()
@@ -65,7 +80,7 @@ class SpectrometerMainWindow(QtWidgets.QMainWindow):
         self.data_dockwidget.setWidget(self.data_widget)
 
         # Create spectrometer settings dialog
-        self.settings_dialog = settingsdialog.SettingsDialog()
+        #self.settings_dialog = settingsdialog.SettingsDialog()
 
         # Create QActions
         close_icon = QtGui.QIcon(os.path.join(icon_path, 'application-exit'))
@@ -76,10 +91,10 @@ class SpectrometerMainWindow(QtWidgets.QMainWindow):
         self.action_restore_view.setToolTip('Restore the view to the default.')
 
         spec_setting_icon = QtGui.QIcon(os.path.join(icon_path, 'utilities-terminal'))
-        self.action_spectrometer_settings = QtWidgets.QAction(icon=spec_setting_icon,
-                                                              text='Show Spectrometer Settings',
-                                                              parent=self)
-        self.action_spectrometer_settings.setToolTip('Show the Spectrometer Settings.')
+        #self.action_spectrometer_settings = QtWidgets.QAction(icon=spec_setting_icon,
+        #                                                      text='Show Spectrometer Settings',
+        #                                                      parent=self)
+        #self.action_spectrometer_settings.setToolTip('Show the Spectrometer Settings.')
 
         fit_settings_icon = QtGui.QIcon(os.path.join(icon_path, 'configure'))
         self.action_show_fit_settings = QtWidgets.QAction(icon=fit_settings_icon,
@@ -112,7 +127,7 @@ class SpectrometerMainWindow(QtWidgets.QMainWindow):
         menu.addSeparator()
         menu.addAction(self.action_close)
         menu = menu_bar.addMenu('View')
-        menu.addAction(self.action_spectrometer_settings)
+        #menu.addAction(self.action_spectrometer_settings)
         menu.addAction(self.action_show_fit_settings)
         menu.addSeparator()
         menu.addAction(self.action_show_data)
@@ -125,7 +140,7 @@ class SpectrometerMainWindow(QtWidgets.QMainWindow):
         self.action_restore_view.triggered.connect(self.restore_view)
         self.action_show_data.triggered[bool].connect(self.data_dockwidget.setVisible)
         self.data_dockwidget.sigClosed.connect(lambda: self.action_show_data.setChecked(False))
-        self.action_spectrometer_settings.triggered.connect(self.settings_dialog.exec_)
+        #self.action_spectrometer_settings.triggered.connect(self.settings_dialog.exec_)
 
         # Attach action to QToolButton
         self.control_widget.save_spectrum_button.setDefaultAction(self.action_save_spectrum)

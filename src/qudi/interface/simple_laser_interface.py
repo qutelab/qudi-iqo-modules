@@ -47,7 +47,8 @@ class LaserState(IntEnum):
 class SimpleLaserInterface(Base):
     """ This interface can be used to control a simple laser. It handles power control, control modes and shutter states
 
-    This interface is useful for a standard, fixed wavelength laser that you can find in a lab.
+    This interface is useful for a standard, fixed/tunable wavelength laser that you can find in a lab.
+    Expanded to include piezo voltage for tunable laser
     It handles power control via constant power or constant current mode, a shutter state if the hardware has a shutter
     and a temperature regulation control.
 
@@ -122,6 +123,45 @@ class SimpleLaserInterface(Base):
         """ Set laser current setpoint
 
         @param float current: desired laser current setpoint
+        """
+        pass
+
+    @abstractmethod
+    def get_piezo_voltage(self):
+        """ Get actual laser piezo voltage
+
+        @return float: laser piezo voltage
+        """
+        pass
+
+    @abstractmethod
+    def get_piezo_voltage_range(self):
+        """ Get laser piezo voltage range.
+
+        @return float[2]: laser piezo voltage range
+        """
+        pass
+
+    @abstractmethod
+    def get_piezo_voltage_setpoint(self):
+        """ Get laser piezo voltage setpoint
+
+        @return float: laser piezo voltage setpoint
+        """
+        pass
+
+    @abstractmethod
+    def set_piezo_voltage(self, piezo_voltage):
+        """ Set laser piezo voltage setpoint
+
+        @param float current: desired laser piezo voltage setpoint
+        """
+        pass
+
+    @abstractmethod
+    def get_wavelength(self):
+        """ If a wavelength is available, set this to return the value
+        @return float: laser wavelength
         """
         pass
 

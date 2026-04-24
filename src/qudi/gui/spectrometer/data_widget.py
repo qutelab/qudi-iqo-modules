@@ -81,11 +81,16 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
         axis_type_label = QtWidgets.QLabel('Axis Type:')
         axis_type_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         self.axis_type = ToggleSwitch(state_names=('Wavelength', 'Frequency'))
-        # main_layout.addWidget(axis_type_label, 1, 0)
-        # main_layout.addWidget(self.axis_type, 1, 1)
         h_layout = QtWidgets.QHBoxLayout()
         h_layout.addWidget(axis_type_label)
         h_layout.addWidget(self.axis_type)
+
+        plot_type_label = QtWidgets.QLabel('Plot Type:')
+        plot_type_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.plot_type = ToggleSwitch(state_names=('Background', 'Spectrum'))
+        h_layout.addWidget(plot_type_label)
+        h_layout.addWidget(self.plot_type)
+
         h_layout.addStretch()
         main_layout.addLayout(h_layout, 1, 0, 1, 2)
 

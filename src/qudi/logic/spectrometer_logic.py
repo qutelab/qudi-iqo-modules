@@ -32,8 +32,6 @@ from qudi.util.network import netobtain
 from qudi.core.module import LogicBase
 from qudi.util.datastorage import TextDataStorage
 from qudi.util.datafitting import FitContainer, FitConfigurationsModel
-from qudi.interface.spectrometer_interface import SpectrometerInterface
-from qudi.interface.modulation_interface import ModulationInterface
 
 
 class SpectrometerLogic(LogicBase):
@@ -45,29 +43,31 @@ class SpectrometerLogic(LogicBase):
         module.Class: 'spectrometer_logic.SpectrometerLogic'
         connect:
             spectrometer: 'myspectrometer'
+            camera: 'mycamera'
             modulation_device: 'my_odmr'
     """
 
     # declare connectors
-    spectrometer = Connector(interface=SpectrometerInterface)
-    modulation_device = Connector(interface=ModulationInterface, optional=True)
+    spectrometer = Connector(interface='SpectrometerInterface')
+    #camera = Connector(interface='CameraInterface')
+    modulation_device = Connector(interface='ModulationInterface', optional=True)
 
     # declare status variables
     _spectrum = StatusVar(name='spectrum', default=[None, None])
     _background = StatusVar(name='background', default=None)
     _wavelength = StatusVar(name='wavelength', default=None)
     _background_correction = StatusVar(name='background_correction', default=False)
-    _constant_acquisition = StatusVar(name='constant_acquisition', default=False)
+    _number_spectra = StatusVar(name='_number_spectra', default=1)
+    _number_background = StatusVar(name='_number_background', default=1)
     _differential_spectrum = StatusVar(name='differential_spectrum', default=False)
     _fit_region = StatusVar(name='fit_region', default=[0, 1])
     _axis_type_frequency = StatusVar(name='axis_type_frequency', default=False)
-    max_repetitions = StatusVar(name='max_repetitions', default=0)
 
     _fit_config = StatusVar(name='fit_config', default=dict())
 
     # Internal signals
-    _sig_get_spectrum = QtCore.Signal(bool, bool, bool)
-    _sig_get_background = QtCore.Signal(bool, bool)
+    _sig_get_spectrum = QtCore.Signal(int, bool, bool)
+    _sig_get_background = QtCore.Signal(int, bool)
 
     # External signals eg for GUI module
     sig_data_updated = QtCore.Signal()
@@ -101,6 +101,7 @@ class SpectrometerLogic(LogicBase):
     def on_activate(self):
         """ Initialisation performed during activation of the module.
         """
+        self._create_links()
         self._fit_config_model = FitConfigurationsModel(parent=self)
         self._fit_config_model.load_configs(self._fit_config)
         self._fit_container = FitContainer(parent=self, config_model=self._fit_config_model)
@@ -119,16 +120,12 @@ class SpectrometerLogic(LogicBase):
     def stop(self):
         self._stop_acquisition = True
 
-    def run_get_spectrum(self, constant_acquisition=None, differential_spectrum=None, reset=True):
-        if constant_acquisition is not None:
-            self.constant_acquisition = bool(constant_acquisition)
-        if differential_spectrum is not None:
-            self.differential_spectrum = bool(differential_spectrum)
-        self._sig_get_spectrum.emit(self._constant_acquisition, self._differential_spectrum, reset)
+    def run_get_spectrum(self, number_spectra=None, differential_spectrum=None, reset=True):  #Call this to queue the acquisition
+        self._sig_get_spectrum.emit(number_spectra, differential_spectrum, reset)
 
-    def get_spectrum(self, constant_acquisition=None, differential_spectrum=None, reset=True):
-        if constant_acquisition is not None:
-            self.constant_acquisition = bool(constant_acquisition)
+    def get_spectrum(self, number_spectra=None, differential_spectrum=None, reset=True):  #Call this to directly acquire the spectrum
+        if (number_spectra is not None) and (number_spectra != 0):  #sig_get_spectrum emits only ints, so 0 is passed instead of None.
+            self.number_spectra = int(number_spectra)
         if differential_spectrum is not None:
             self.differential_spectrum = bool(differential_spectrum)
         self._stop_acquisition = False
@@ -168,22 +165,20 @@ class SpectrometerLogic(LogicBase):
                 self._spectrum[1] = None
         self.sig_data_updated.emit()
 
-        if self._constant_acquisition and not self._stop_acquisition \
-                and (not self.max_repetitions or self._repetitions_spectrum < self.max_repetitions):
+        if ((self._repetitions_spectrum < self.number_spectra) or (self.number_spectra == -1)) and not self._stop_acquisition:
             return self.run_get_spectrum(reset=False)
         self._acquisition_running = False
         self.fit_region = self._fit_region
         self.sig_state_updated.emit()
         return self.spectrum
 
-    def run_get_background(self, constant_acquisition=None, reset=True):
-        if constant_acquisition is not None:
-            self.constant_acquisition = bool(constant_acquisition)
-        self._sig_get_background.emit(self._constant_acquisition, reset)
+    def run_get_background(self, number_background=None, reset=True):
+        self._sig_get_background.emit(number_background,reset)
 
-    def get_background(self, constant_acquisition=None, reset=True):
-        if constant_acquisition is not None:
-            self.constant_acquisition = bool(constant_acquisition)
+    def get_background(self, number_background=None, reset=True):
+        if (number_background is not None) and (number_background != 0):  #sig_get_background emits only ints, so 0 is passed instead of None.
+            self.number_background = int(number_background)
+
         self._stop_acquisition = False
 
         if reset:
@@ -205,9 +200,9 @@ class SpectrometerLogic(LogicBase):
             self._wavelength = data[0, :]
             self._repetitions_background += 1
         self.sig_data_updated.emit()
-
-        if self._constant_acquisition and not self._stop_acquisition\
-                and (not self.max_repetitions or self._repetitions_background < self.max_repetitions):
+        
+        
+        if ((self._repetitions_background < self.number_background) or (self.number_background == -1)) and not self._stop_acquisition:
             return self.run_get_background(reset=False)
         self._acquisition_running = False
         self.sig_state_updated.emit()
@@ -273,12 +268,21 @@ class SpectrometerLogic(LogicBase):
         self.sig_data_updated.emit()
 
     @property
-    def constant_acquisition(self):
-        return self._constant_acquisition
+    def number_spectra(self):
+        return self._number_spectra
 
-    @constant_acquisition.setter
-    def constant_acquisition(self, value):
-        self._constant_acquisition = bool(value)
+    @number_spectra.setter
+    def number_spectra(self, value):
+        self._number_spectra = int(value)
+        self.sig_state_updated.emit()
+
+    @property
+    def number_background(self):
+        return self._number_background
+
+    @number_background.setter
+    def number_background(self, value):
+        self._number_background = int(value)
         self.sig_state_updated.emit()
 
     @property
@@ -312,7 +316,7 @@ class SpectrometerLogic(LogicBase):
         parameters = {'acquisition repetitions': self.repetitions,
                       'differential_spectrum'  : self.differential_spectrum,
                       'background_correction'  : self.background_correction,
-                      'constant_acquisition'   : self.constant_acquisition}
+                      }
         if self.fit_method != 'No Fit' and self.fit_results is not None:
             parameters['fit_method'] = self.fit_method
             parameters['fit_results'] = self.fit_results.params
@@ -400,7 +404,7 @@ class SpectrometerLogic(LogicBase):
 
         ds.save_thumbnail(figure, file_path=file_path.rsplit('.', 1)[0])
 
-        self.log.debug(f'Spectrum saved to:{file_path}')
+        self.log.info(f'Spectrum saved to:{file_path}')
 
     @staticmethod
     def _get_si_scaling(number):
@@ -429,13 +433,135 @@ class SpectrometerLogic(LogicBase):
         self.fit_region = (0, 1e20)
         self.sig_data_updated.emit()
 
-    @property
-    def exposure_time(self):
-        return self.spectrometer().exposure_time
+    ############################
+    #Spectrometer settings links
+    ############################
 
-    @exposure_time.setter
-    def exposure_time(self, value):
-        self.spectrometer().exposure_time = float(value)
+    def _hw_property_wrapper(self,name):
+        hw_object = self.spectrometer()
+        hw_class = hw_object.__class__
+        def _fset(self,val):
+            res = setattr(hw_object, name, val)
+            self.sig_state_updated.emit()
+            return res
+        if hasattr(hw_object,name):
+            return property(
+                fget = lambda self : getattr(hw_object, name),
+                fset = _fset,
+                doc = getattr(hw_class, name).__doc__
+            )
+        else:
+            return property(fget = lambda self: None)
+
+    def _create_links(self):
+        #This should probably be done through the interface or something, but I can't be bothered.
+        prop_list = ['exposure_time', 'grating_dict', 'grating', 'output_port_dict', 'output_port', 'wavelength',
+                      'camera_temperature', 'camera_temperature_status', 'camera_temperature_stable',
+                        'camera_temperature_setpoint', 'camera_cooler_on'
+                     ]
+        for prop in prop_list:  #Properties need to be on the class, not the instance.
+            setattr(self.__class__, prop, self._hw_property_wrapper(prop))
+
+
+    if False:
+        @property
+        def exposure_time(self):
+            return self.spectrometer().exposure_time
+
+        @exposure_time.setter
+        def exposure_time(self, value):
+            self.spectrometer().exposure_time = float(value)
+
+        @property
+        def grating_dict(self):
+            if hasattr(self.spectrometer(), 'grating_dict'):
+                return self.spectrometer().grating_dict
+            else: 
+                return None
+
+        @property
+        def grating(self):
+            if hasattr(self.spectrometer(), 'grating'):
+                return self.spectrometer().grating
+            else: 
+                return None
+        
+        @grating.setter
+        def grating(self, value):
+            if hasattr(self.spectrometer(), 'grating'):
+                self.spectrometer().grating = value
+            else: 
+                self.log.warning('Trying to set grating, but spectrometer does not have this property.')
+        
+        @property
+        def output_port(self):
+            if hasattr(self.spectrometer(), 'output_port'):
+                return self.spectrometer().output_port
+            else: 
+                return None
+        
+        @output_port.setter
+        def output_port(self, value):
+            if hasattr(self.spectrometer(), 'output_port'):
+                self.spectrometer().output_port = value
+            else: 
+                self.log.warning('Trying to set output port, but spectrometer does not have this property.')
+        
+        @property
+        def central_wavelength(self):
+            if hasattr(self.spectrometer(), 'wavelength'):
+                return self.spectrometer().wavelength
+            else: 
+                return None
+        
+        @central_wavelength.setter
+        def central_wavelength(self, value):
+            if hasattr(self.spectrometer(), 'wavelength'):
+                self.spectrometer().wavelength = value
+            else: 
+                self.log.warning('Trying to set central wavelength, but spectrometer does not have this property.')
+    
+        @property 
+        def camera_temperature(self):
+            if hasattr(self.spectrometer(), 'camera_temperature'):
+                return self.spectrometer().camera_temperature
+            else: 
+                return None
+            
+        @property
+        def camera_temperature_status(self):
+            if hasattr(self.spectrometer(), 'camera_temperature_status'):
+                return self.spectrometer().camera_temperature_status
+            else: 
+                return None
+        
+        @property 
+        def camera_temperature_setpoint(self):
+            if hasattr(self.spectrometer(), 'camera_temperature_setpoint'):
+                return self.spectrometer().camera_temperature_setpoint
+            else: 
+                return None
+
+        @camera_temperature_setpoint.setter
+        def camera_temperature_setpoint(self, value):
+            if hasattr(self.spectrometer(), 'camera_temperature_setpoint'):
+                self.spectrometer().camera_temperature_setpoint = float(value)
+            else: 
+                self.log.warning('Trying to set camera temperature setpoint, but spectrometer does not have this property.')
+
+        @property
+        def camera_cooler_on(self):
+            if hasattr(self.spectrometer(), 'camera_cooler_on'):
+                return self.spectrometer().camera_cooler_on
+            else: 
+                return None
+        
+        @camera_cooler_on.setter
+        def camera_cooler_on(self, value):
+            if hasattr(self.spectrometer(), 'camera_cooler_on'):
+                self.spectrometer().camera_cooler_on = bool(value)
+            else: 
+                self.log.warning('Trying to set camera cooler on/off, but spectrometer does not have this property.')
 
     ################
     # Fitting things
@@ -506,3 +632,5 @@ class SpectrometerLogic(LogicBase):
         new_region = (max(min(self.x_data), fit_region[0]), min(max(self.x_data), fit_region[1]))
         self._fit_region = new_region
         self.sig_state_updated.emit()
+
+

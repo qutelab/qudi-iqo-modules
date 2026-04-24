@@ -121,6 +121,37 @@ class SimpleLaserDummy(SimpleLaserInterface):
         self.current_setpoint = current
         self.power_setpoint = math.pow(self.current_setpoint/100, 2) / 4
 
+    def get_piezo_voltage(self):
+        """ Get actual laser piezo voltage
+
+        @return float: laser piezo voltage
+        """
+        return self.piezo_voltage_setpoint * random.gauss(1, 0.05)
+
+    def get_piezo_voltage_range(self):
+        """ Get laser piezo voltage range.
+
+        @return float[2]: laser piezo voltage range
+        """
+        return (0,100)
+
+    def get_piezo_voltage_setpoint(self):
+        """ Get laser piezo voltage setpoint
+
+        @return float: laser piezo voltage setpoint
+        """
+        return self.piezo_voltage_setpoint
+
+    def set_piezo_voltage(self, piezo_voltage):
+        """ Set laser piezo voltage setpoint
+
+        @param float current: desired laser piezo voltage setpoint
+        """
+        self.piezo_voltage_setpoint = piezo_voltage
+
+    def get_wavelength(self):
+        return 740e-9 + self.piezo_voltage_setpoint*100e-12*random.gauss(1,0.05)
+
     def allowed_control_modes(self):
         """ Get supported control modes
 

@@ -83,27 +83,47 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
 
         # Control switches
         switch_layout = QtWidgets.QGridLayout()
+        switchII=0
+        
+        number_spectra_label = QtWidgets.QLabel('Number of Spectra:')
+        number_spectra_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.number_spectra_input = QtWidgets.QSpinBox()
+        self.number_spectra_input.setMinimum(-1)
+        self.number_spectra_input.setValue(1)
+        self.number_spectra_input.setToolTip('Number of spectra to acquire and average. Set to -1 for infinite acquisition')
+        switch_layout.addWidget(number_spectra_label, switchII, 0)
+        switch_layout.addWidget(self.number_spectra_input, switchII, 1)
+        
+        switchII += 1
+        number_background_label = QtWidgets.QLabel('Number of Background:')
+        number_background_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.number_background_input = QtWidgets.QSpinBox()
+        self.number_background_input.setMinimum(-1)
+        self.number_background_input.setValue(1)
+        self.number_background_input.setToolTip('Number of background spectra to acquire and average. Set to -1 for infinite acquisition')
+        switch_layout.addWidget(number_background_label, switchII, 0)
+        switch_layout.addWidget(self.number_background_input, switchII, 1)
 
-        constant_acquisition_label = QtWidgets.QLabel('Constant Acquisition:')
-        constant_acquisition_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.constant_acquisition_switch = ToggleSwitch(state_names=('Off', 'On'))
-        switch_layout.addWidget(constant_acquisition_label, 0, 0)
-        switch_layout.addWidget(self.constant_acquisition_switch, 0, 1)
-
+        switchII += 1
         background_correction_label = QtWidgets.QLabel('Background Correction:')
         background_correction_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         self.background_correction_switch = ToggleSwitch(state_names=('Off', 'On'))
-        self.background_correction_switch.setMinimumWidth(
+        self.background_correction_switch.setFixedWidth(
             background_correction_label.sizeHint().width()
         )
-        switch_layout.addWidget(background_correction_label, 1, 0)
-        switch_layout.addWidget(self.background_correction_switch, 1, 1)
+        self.background_correction_switch.setFixedHeight(
+            background_correction_label.sizeHint().height()*1.5
+        )
+        switch_layout.addWidget(background_correction_label, switchII, 0)
+        switch_layout.addWidget(self.background_correction_switch, switchII, 1)
 
+        switchII += 1
         differential_spectrum_label = QtWidgets.QLabel('Differential Spectrum:')
         differential_spectrum_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         self.differential_spectrum_switch = ToggleSwitch(state_names=('Off', 'On'))
-        switch_layout.addWidget(differential_spectrum_label, 2, 0)
-        switch_layout.addWidget(self.differential_spectrum_switch, 2, 1)
+        if False:  #Don't have modulator for differential, hide this.
+            switch_layout.addWidget(differential_spectrum_label, 2, 0)
+            switch_layout.addWidget(self.differential_spectrum_switch, 2, 1)
 
         switch_layout.setColumnStretch(2, 1)
 
