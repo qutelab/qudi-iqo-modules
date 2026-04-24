@@ -25,7 +25,7 @@ from time import strftime, localtime
 
 import time
 import numpy as np
-
+from time import sleep  #Imitate time to change settings.
 
 class SpectrometerDummy(SpectrometerInterface):
     """ Dummy spectrometer module.
@@ -86,8 +86,9 @@ class SpectrometerDummy(SpectrometerInterface):
         """
         length = 1024
 
+        self.load_calibration()
         data = np.empty((2, length), dtype=np.double)
-        data[0] = np.arange(730, 750, 20 / length)
+        data[0] = self.wavelengths
         data[1] = np.random.uniform(0, 2000, length)
 
         # lorentz, params = self._fitLogic.make_multiplelorentzian_model(no_of_functions=4)
@@ -107,8 +108,6 @@ class SpectrometerDummy(SpectrometerInterface):
         # params.add('offset', value=50000.)
         #
         # data[1] += lorentz.eval(x=data[0], params=params)
-
-        data[0] = data[0] * 1e-9  # return to logic in SI units (m)
 
         time.sleep(self.exposure_time)
         return data
@@ -195,6 +194,7 @@ class SpectrometerDummy(SpectrometerInterface):
         """
         assert isinstance(value, int), f'grating needs to be an integer index starting at 1, but was {value}'
         self._grating = int(value)
+        sleep(5)
         self.load_calibration()
         print('Grating set to', value, '(', self.grating_dict["by_index"][value], ')')
 

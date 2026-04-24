@@ -9,7 +9,7 @@ from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 
 class GridApp(qw.QWidget):
     
-    sig_grid_updated = QtCore.Signal(list)
+    sig_grid_updated = QtCore.Signal(list,list)
 
     def __init__(self,parent):
         super().__init__()
@@ -104,6 +104,11 @@ class GridApp(qw.QWidget):
         self.btn_c2.clicked.connect(lambda: self.set_pick_mode(2))
         self.btn_c3.clicked.connect(lambda: self.set_pick_mode(3))
 
+        #Defaults
+        self.grid=None
+        self.gridCR=None
+
+
         
     def exec(self):
         self.load_data()
@@ -116,7 +121,7 @@ class GridApp(qw.QWidget):
 
     def update_image(self):
         (xmin, xmax), (ymin, ymax) = self.extent
-        self.img.setImage(self.data)
+        self.img.setImage(self.data.T)
         self.img.setRect(pg.QtCore.QRectF(xmin, ymin, xmax - xmin, ymax - ymin))
 
     def set_pick_mode(self, corner):
@@ -147,7 +152,7 @@ class GridApp(qw.QWidget):
 
         self.pick_mode = None
     
-    grid=None
+    
     def update_grid(self):
         try:
             c1 = np.array([(self.corners[0][0].value()), (self.corners[0][1].value())])
@@ -162,16 +167,18 @@ class GridApp(qw.QWidget):
             v23 = c3 - c2
             # Generate grid
             grid = []
+            self.gridCR = []
             for i in range(n12):
                 for j in range(n23):
                     p = c1 + (i / (n12 - 1)) * v12 + (j / (n23 - 1)) * v23
                     grid.append(p)
+                    self.gridCR.append(f'C{i}R{j}')
 
             self.grid = np.array(grid)
             self.update_done()
             self.scatter.setData(self.grid[:, 0], self.grid[:, 1])
             self.scatter_select.setData([])
-            self.sig_grid_updated.emit([list(gI) for gI in self.grid])
+            self.sig_grid_updated.emit([list(gI) for gI in self.grid], self.gridCR)
 
         except Exception as e:
             print("Error:", e)

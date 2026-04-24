@@ -145,13 +145,17 @@ class SpectrometerGui(GuiBase):
         self._mw.settings_widget.camera_cooler_toggle.sigStateChanged.connect(
             lambda state: setattr(self._spectrometer_logic(), 'camera_cooler_on', state=='Cooling ON')
         )
-        self._mw.settings_widget.exposure_time_set.valueChanged.connect(
-            lambda value: setattr(self._spectrometer_logic(), 'exposure_time', value)
+        self._mw.settings_widget.exposure_time_set.setToolTip('Press Enter to apply')
+        self._mw.settings_widget.exposure_time_set.editingFinished.connect(
+            lambda : setattr(self._spectrometer_logic(), 'exposure_time', self._mw.settings_widget.exposure_time_set.value())
         )
+        #self._mw.settings_widget.exposure_time_set.editingFinished.connect(self._mw.settings_widget.exposure_time_set.clearFocus)  #Remove focus after editing so that mouse wheel doesn't change it by accident
+        self._mw.settings_widget.central_wavelength_set.setToolTip('Press Enter to apply')
         self._mw.settings_widget.central_wavelength_set.editingFinished.connect(
             lambda : setattr(self._spectrometer_logic(), 'wavelength', self._mw.settings_widget.central_wavelength_set.value())
         )
-        self._mw.settings_widget.central_wavelength_set.setToolTip('Press return to apply')
+        #self._mw.settings_widget.central_wavelength_set.editingFinished.connect(self._mw.settings_widget.central_wavelength_set.clearFocus)  #Remove focus after editing so that mouse wheel doesn't change it by accident
+        #self._mw.settings_widget.central_wavelength_set.editingFinished.connect(lambda:print('HI'))
         self._mw.settings_widget.grating_set.currentTextChanged.connect(
             lambda text: setattr(self._spectrometer_logic(), 'grating', self._spectrometer_logic().grating_dict['by_name'][text])
         )
@@ -210,7 +214,7 @@ class SpectrometerGui(GuiBase):
         #self._mw.settings_dialog.rejected.disconnect()
 
         self._mw.settings_widget.camera_cooler_toggle.sigStateChanged.disconnect()
-        self._mw.settings_widget.exposure_time_set.valueChanged.disconnect()
+        self._mw.settings_widget.exposure_time_set.editingFinished.disconnect()
         self._mw.settings_widget.central_wavelength_set.editingFinished.disconnect()
         self._mw.settings_widget.grating_set.currentTextChanged.disconnect()
         self._mw.settings_widget.output_port_set.currentTextChanged.disconnect()
@@ -298,12 +302,17 @@ class SpectrometerGui(GuiBase):
     def update_data(self):
         """ The function that grabs the data and sends it to the plot.
         """
-        x_data = self._spectrometer_logic().x_data
+        
         if self._mw.data_widget.plot_type.current_state == 'Background':
+            x_data = self._spectrometer_logic().x_data_bkg
             spectrum = self._spectrometer_logic().background
         else:
+            x_data = self._spectrometer_logic().x_data
             spectrum = self._spectrometer_logic().spectrum
         if x_data is None or spectrum is None:
+            return
+        
+        if (len(x_data)==0) or (len(spectrum)==0):
             return
 
         # erase previous fit line
@@ -407,9 +416,10 @@ class SpectrometerGui(GuiBase):
 
     def get_settings(self):
         self.update_temperature()
+        print('Updating values')
         self._mw.settings_widget.camera_cooler_toggle.setChecked(self._spectrometer_logic().camera_cooler_on)
-        self._mw.settings_widget.exposure_time_set.setValue(round(float(self._spectrometer_logic().exposure_time)))
-        self._mw.settings_widget.central_wavelength_set.setValue(round(float(self._spectrometer_logic().wavelength)))
+        self._mw.settings_widget.exposure_time_set.setValue(float(self._spectrometer_logic().exposure_time))
+        self._mw.settings_widget.central_wavelength_set.setValue(float(self._spectrometer_logic().wavelength))
         grating = self._spectrometer_logic().grating_dict['by_index'][self._spectrometer_logic().grating]
         self._mw.settings_widget.grating_set.setCurrentText(grating)
         self._mw.settings_widget.output_port_set.setCurrentText(self._spectrometer_logic().output_port)

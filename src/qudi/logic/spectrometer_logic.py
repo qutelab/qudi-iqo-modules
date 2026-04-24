@@ -53,9 +53,9 @@ class SpectrometerLogic(LogicBase):
     modulation_device = Connector(interface='ModulationInterface', optional=True)
 
     # declare status variables
-    _spectrum = StatusVar(name='spectrum', default=[None, None])
-    _background = StatusVar(name='background', default=None)
-    _wavelength = StatusVar(name='wavelength', default=None)
+    #_spectrum = StatusVar(name='spectrum', default=[None, None])
+    #_background = StatusVar(name='background', default=None)
+    #_wavelength = StatusVar(name='wavelength', default=None)
     _background_correction = StatusVar(name='background_correction', default=False)
     _number_spectra = StatusVar(name='_number_spectra', default=1)
     _number_background = StatusVar(name='_number_background', default=1)
@@ -73,6 +73,7 @@ class SpectrometerLogic(LogicBase):
     sig_data_updated = QtCore.Signal()
     sig_state_updated = QtCore.Signal()
     sig_fit_updated = QtCore.Signal(str, object)
+    sig_acquisition_complete = QtCore.Signal(str)
 
     def __init__(self, **kwargs):
         """ Create SpectrometerLogic object with connectors.
@@ -90,6 +91,7 @@ class SpectrometerLogic(LogicBase):
 
         self._spectrum = [None, None]
         self._wavelength = None
+        self._wavelength_bkg = None
         self._background = None
         self._repetitions_spectrum = 0
         self._repetitions_background = 0
@@ -110,6 +112,7 @@ class SpectrometerLogic(LogicBase):
         self._sig_get_spectrum.connect(self.get_spectrum, QtCore.Qt.QueuedConnection)
         self._sig_get_background.connect(self.get_background, QtCore.Qt.QueuedConnection)
 
+
     def on_deactivate(self):
         """ Deinitialisation performed during deactivation of the module.
         """
@@ -121,19 +124,24 @@ class SpectrometerLogic(LogicBase):
         self._stop_acquisition = True
 
     def run_get_spectrum(self, number_spectra=None, differential_spectrum=None, reset=True):  #Call this to queue the acquisition
+        if reset:
+            self._stop_acquisition = False    
         self._sig_get_spectrum.emit(number_spectra, differential_spectrum, reset)
 
     def get_spectrum(self, number_spectra=None, differential_spectrum=None, reset=True):  #Call this to directly acquire the spectrum
-        if (number_spectra is not None) and (number_spectra != 0):  #sig_get_spectrum emits only ints, so 0 is passed instead of None.
-            self.number_spectra = int(number_spectra)
+        if number_spectra is not None:
+            if number_spectra > 0:  #sig_get_background emits only ints, so 0 is passed instead of None.
+                self.number_spectra = int(number_spectra)
         if differential_spectrum is not None:
             self.differential_spectrum = bool(differential_spectrum)
-        self._stop_acquisition = False
-
+        
         if reset:
-            self._spectrum = [None, None]
+            self._spectrum = [None, None]  # Main spectrum, differential spectrum
             self._wavelength = None
             self._repetitions_spectrum = 0
+            self._spec_parameters_at_start = {key:getattr(self,key) for key in ['exposure_time', 'grating', 
+                                                            'output_port', 'wavelength', 'camera_temperature']}
+            self._spec_timestamp = datetime.now()
 
         self._acquisition_running = True
         self.sig_state_updated.emit()
@@ -145,10 +153,9 @@ class SpectrometerLogic(LogicBase):
         data = np.array(netobtain(self.spectrometer().record_spectrum()))
         with self._lock:
             if self._spectrum[0] is None:
-                self._spectrum[0] = data[1, :]
-            else:
-                self._spectrum[0] += data[1, :]
-
+                self._spectrum[0] = np.full((self.number_spectra,data.shape[-1]), np.nan) #Pre-populate array
+            self._spectrum[0][self._repetitions_spectrum] = data[1, :]
+            
             self._wavelength = data[0, :]
             self._repetitions_spectrum += 1
 
@@ -157,34 +164,40 @@ class SpectrometerLogic(LogicBase):
             data = np.array(netobtain(self.spectrometer().record_spectrum()))
             with self._lock:
                 if self._spectrum[1] is None:
-                    self._spectrum[1] = data[1, :]
-                else:
-                    self._spectrum[1] += data[1, :]
+                    self._spectrum[1] = np.full((self.number_spectra,data.shape[-1]), np.nan) #Pre-populate array
+                self._spectrum[1][self._repetitions_spectrum] = data[1, :]
+                
         else:
             with self._lock:
                 self._spectrum[1] = None
         self.sig_data_updated.emit()
-
+        
         if ((self._repetitions_spectrum < self.number_spectra) or (self.number_spectra == -1)) and not self._stop_acquisition:
-            return self.run_get_spectrum(reset=False)
-        self._acquisition_running = False
-        self.fit_region = self._fit_region
-        self.sig_state_updated.emit()
-        return self.spectrum
+            self.run_get_spectrum(reset=False)
+        else:
+            self._acquisition_running = False
+            self._stop_acquisition = False
+            self.fit_region = self._fit_region  #Call the setter
+            self.sig_state_updated.emit()
+            self.sig_acquisition_complete.emit('spectrum')
 
     def run_get_background(self, number_background=None, reset=True):
+        if reset:
+            self._stop_acquisition = False
         self._sig_get_background.emit(number_background,reset)
 
     def get_background(self, number_background=None, reset=True):
-        if (number_background is not None) and (number_background != 0):  #sig_get_background emits only ints, so 0 is passed instead of None.
-            self.number_background = int(number_background)
-
-        self._stop_acquisition = False
+        if number_background is not None:
+            if number_background > 0:  #sig_get_background emits only ints, so 0 is passed instead of None.
+                self.number_background = int(number_background)
 
         if reset:
             self._background = None
-            self._wavelength = None
+            self._wavelength_bkg = None
             self._repetitions_background = 0
+            self._bkg_parameters_at_start = {key:getattr(self,key) for key in ['exposure_time', 'grating', 
+                                                            'output_port', 'wavelength', 'camera_temperature']}
+            self._bkg_timestamp = datetime.now()
 
         self._acquisition_running = True
         self.sig_state_updated.emit()
@@ -193,24 +206,24 @@ class SpectrometerLogic(LogicBase):
         data = np.array(netobtain(self.spectrometer().record_spectrum()))
         with self._lock:
             if self._background is None:
-                self._background = data[1, :]
-            else:
-                self._background += data[1, :]
-
-            self._wavelength = data[0, :]
+                self._background = np.full((self.number_background,data.shape[-1]), np.nan) #Pre-populate array
+            self._background[self._repetitions_background] = data[1, :]
+            self._wavelength_bkg = data[0, :]
             self._repetitions_background += 1
         self.sig_data_updated.emit()
         
-        
         if ((self._repetitions_background < self.number_background) or (self.number_background == -1)) and not self._stop_acquisition:
-            return self.run_get_background(reset=False)
-        self._acquisition_running = False
-        self.sig_state_updated.emit()
-        return self.background
+            self.run_get_background(reset=False)
+        else:
+            self._acquisition_running = False
+            self._stop_acquisition = False
+            self.sig_state_updated.emit()
+            self.sig_acquisition_complete.emit('background')
 
     @property
     def acquisition_running(self):
         return self._acquisition_running
+    
 
     @property
     def spectrum(self):
@@ -219,15 +232,35 @@ class SpectrometerLogic(LogicBase):
         data = np.copy(self._spectrum[0])
         if self._differential_spectrum and self._spectrum[1] is not None:
             data = data - self._spectrum[1]
-        if self._repetitions_spectrum != 0:
-            data /= self._repetitions_spectrum
+
+        mask_incomplete = np.all(np.isfinite(data), axis=1)
+        data = data[mask_incomplete]
+        if data.shape[0]<=2: #Only 1 or 2 spectra, take simple mean
+            data = np.mean(data,axis=0)
+        else:
+            # Simple outlier cut to remove cosmic rays from mean.
+            dataMean = []
+            for dI in data.T:
+                cut = np.full(len(dI),True)
+                for ii in range(3):
+                    mean = np.mean(dI[cut])
+                    std = np.std(dI[cut])
+                    cut = np.abs(dI-mean)<5*std
+                dataMean.append(np.mean(dI[cut]))
+            data = np.array(dataMean)
+
         if self._background_correction:
-            if self._background is not None and len(data) == len(self._background):
-                data = data - self.background
+            if not np.all(self._wavelength_bkg == self._wavelength):
+                self.log.warning('Background not updated at this wavelength, disabling background correction')
+                self._background_correction = False
             else:
-                self.log.warning(f'Length of spectrum ({len(data)}) does not match '
-                                 f'background ({len(self._background) if self._background is not None else 0}), '
-                                 f'returning pure spectrum.')
+                background = self.background
+                if background is None:
+                    self.log.warning('Background not available, disabling background correction')
+                    self._background_correction = False
+                else:
+                    data = data - background
+
         return data
 
     def get_spectrum_at_x(self, x):
@@ -240,10 +273,30 @@ class SpectrometerLogic(LogicBase):
 
     @property
     def background(self):
-        if self._repetitions_background != 0:
-            return self._background / self._repetitions_background
+        if self._background is None:
+            return None
+        
+        data = np.copy(self._background)
+
+        mask_incomplete = np.all(np.isfinite(data), axis=1)
+        data = data[mask_incomplete]
+
+        if data.shape[0]<=2: #Only 1 or 2 spectra, take simple mean
+            data = np.mean(data,axis=0)
         else:
-            return self._background
+            # Simple outlier cut to remove cosmic rays from mean.
+            dataMean = []
+            for dI in data.T:
+                cut = np.full(len(dI),True)
+                for ii in range(3):
+                    mean = np.mean(dI[cut])
+                    std = np.std(dI[cut])
+                    cut = np.abs(dI-mean)<5*std
+                dataMean.append(np.mean(dI[cut]))
+            data = np.array(dataMean)
+        
+        return data
+
 
     @property
     def x_data(self):
@@ -252,6 +305,14 @@ class SpectrometerLogic(LogicBase):
                 return self.speed_of_light / self._wavelength
         else:
             return self._wavelength
+
+    @property
+    def x_data_bkg(self):
+        if self._axis_type_frequency:
+            if self._wavelength_bkg is not None:
+                return self.speed_of_light / self._wavelength_bkg
+        else:
+            return self._wavelength_bkg
 
     @property
     def repetitions(self):
@@ -273,6 +334,7 @@ class SpectrometerLogic(LogicBase):
 
     @number_spectra.setter
     def number_spectra(self, value):
+        assert value > 0
         self._number_spectra = int(value)
         self.sig_state_updated.emit()
 
@@ -282,6 +344,7 @@ class SpectrometerLogic(LogicBase):
 
     @number_background.setter
     def number_background(self, value):
+        assert value > 0
         self._number_background = int(value)
         self.sig_state_updated.emit()
 
@@ -301,110 +364,136 @@ class SpectrometerLogic(LogicBase):
             self._differential_spectrum = False
         self.sig_state_updated.emit()
 
-    def save_spectrum_data(self, background=False, name_tag='', root_dir=None, parameter=None):
+    def save_all_data(self, name_tag='', root_dir=None, metadata=None):
+        self.save_spectrum_data(processed=True, name_tag=name_tag, root_dir=root_dir, metadata=metadata)
+        if self._background is not None:
+            self.save_spectrum_data(background=True, name_tag=name_tag, root_dir=root_dir, metadata=metadata)
+        self.save_spectrum_data(name_tag=name_tag, root_dir=root_dir, metadata=metadata)
+
+    def save_spectrum_data(self, processed = False, background=False, name_tag='', root_dir=None, metadata=None):
         """ Saves the current spectrum data to a file.
 
-        @param bool background: Whether this is a background spectrum (dark field) or not.
+        @param bool processed: Save the processed (mean with BG correction and differential if available)
+        @param bool background: Whether this is a background spectrum (dark field) or not. Ignored if processed=True
         @param string name_tag: postfix name tag for saved filename.
         @param string root_dir: overwrite the file position in necessary
-        @param dict parameter: additional parameters to add to the saved file
+        @param dict metadata: additional metadata to add to the saved file
         """
 
-        timestamp = datetime.now()
-
         # write experimental parameters
-        parameters = {'acquisition repetitions': self.repetitions,
-                      'differential_spectrum'  : self.differential_spectrum,
-                      'background_correction'  : self.background_correction,
-                      }
-        if self.fit_method != 'No Fit' and self.fit_results is not None:
-            parameters['fit_method'] = self.fit_method
-            parameters['fit_results'] = self.fit_results.params
-            parameters['fit_region'] = self.fit_region
-        if parameter:
-            parameters.update(parameter)
+        metadata = metadata if metadata else {}
+        if background:
+            metadata.update(self._bkg_parameters_at_start)
+        else:
+            metadata.update(self._spec_parameters_at_start)
+        if processed:
+            metadata.update( {'acquisition repetitions': self.repetitions,
+                        'differential_spectrum'  : self.differential_spectrum,
+                        'background_correction'  : self.background_correction,
+                        })
+            if self.fit_method != 'No Fit' and self.fit_results is not None:
+                metadata['fit_method'] = self.fit_method
+                metadata['fit_results'] = self.fit_results.params
+                metadata['fit_region'] = self.fit_region
+        
 
-        if self.x_data is None:
-            self.log.error('No data to save.')
-            return
-
+        if background:
+            x_data = self.x_data_bkg
+        else:
+            x_data = self.x_data
         if self._axis_type_frequency:
-            data = [self.x_data * 1e-12, ]
+            data = [x_data * 1e-12, ]
             header = ['Frequency (THz)', ]
         else:
-            data = [self.x_data * 1e9, ]
+            data = [x_data * 1e9, ]
             header = ['Wavelength (nm)', ]
 
         # prepare the data
-        if not background:
-            if self.spectrum is None:
+        if processed:
+            spectrum = self.spectrum
+            if spectrum is None:
                 self.log.error('No spectrum to save.')
                 return
-            data.append(self.spectrum)
+            timestamp = self._spec_timestamp
+            background_data = self.background
+            if background_data is not None:
+                if np.all(self._wavelength == self._wavelength_bkg):
+                    data.append(background_data)
+                    header.append('Background')
+            data.append(spectrum)
+            header.append('Signal')
             file_label = 'spectrum' + name_tag
-        else:
-            if self.background is None or self.spectrum is None:
+        elif background:
+            if self._background is None:
                 self.log.error('No background to save.')
                 return
-            data.append(self.background)
-            file_label = 'background' + name_tag
-
-        header.append('Signal')
-
-        if not background:
-            # if background correction was on, also save the data without correction
-            if self._background_correction:
-                self._background_correction = False
-                data.append(self.spectrum)
-                self._background_correction = True
-                header.append('Signal raw')
-
-            # If the differential spectra arrays are not empty, save them as raw data
-            if self._differential_spectrum and self._spectrum[1] is not None:
-                data.append(self._spectrum[0])
-                header.append('Signal ON')
-                data.append(self._spectrum[1])
-                header.append('Signal OFF')
+            timestamp = self._bkg_timestamp
+            raw_data = self._background
+            mask_incomplete = np.all(np.isfinite(raw_data), axis=1)
+            raw_data = raw_data[mask_incomplete]
+            for ii in range(len(raw_data)):
+                data.append(raw_data[ii])
+                header.append(f'Background {ii+1}')
+            file_label = 'background_raw' + name_tag
+        else:
+            if self._spectrum is None:
+                self.log.error('No spectrum to save.')
+                return
+            timestamp = self._spec_timestamp
+            raw_data,raw_diff = self._spectrum
+            mask_incomplete = np.all(np.isfinite(raw_data), axis=1)
+            raw_data = raw_data[mask_incomplete]
+            if raw_diff is not None:
+                raw_diff = raw_diff[mask_incomplete]
+            for ii in range(len(raw_data)):
+                data.append(raw_data[ii])
+                header.append(f'Spectrum {ii+1}')
+                if raw_diff is not None:
+                    data.append(raw_diff[ii])
+                    header.append(f'Spectrum-Off {ii+1}')
+            file_label = 'spectrum_raw' + name_tag
 
         # save the date to file
         ds = TextDataStorage(root_dir=self.module_default_data_dir if root_dir is None else root_dir)
 
         file_path, _, _ = ds.save_data(np.array(data).T,
                                        column_headers=header,
-                                       metadata=parameters,
+                                       metadata=metadata,
                                        nametag=file_label,
                                        timestamp=timestamp,
                                        column_dtypes=[float] * len(header))
-
-        # save the figure into a file
-        figure, ax1 = plt.subplots()
-        rescale_factor, prefix = self._get_si_scaling(np.max(data[1]))
-
-        ax1.plot(data[0],
-                 data[1] / rescale_factor,
-                 linestyle=':',
-                 linewidth=0.5
-                 )
-
-        if self.fit_method != 'No Fit' and self.fit_results is not None:
-            if self._axis_type_frequency:
-                x_data = self.fit_results.high_res_best_fit[0] * 1e-12
-            else:
-                x_data = self.fit_results.high_res_best_fit[0] * 1e9
-
-            ax1.plot(x_data,
-                     self.fit_results.high_res_best_fit[1] / rescale_factor,
-                     linestyle=':',
-                     linewidth=0.5
-                     )
-
-        ax1.set_xlabel(header[0])
-        ax1.set_ylabel('Intensity ({} arb. u.)'.format(prefix))
-        figure.tight_layout()
-
-        ds.save_thumbnail(figure, file_path=file_path.rsplit('.', 1)[0])
-
         self.log.info(f'Spectrum saved to:{file_path}')
+
+        if processed:
+            # save the figure into a file
+            figure, ax1 = plt.subplots()
+            rescale_factor, prefix = self._get_si_scaling(np.max(data[1]))
+
+            ax1.plot(data[0],
+                    data[1] / rescale_factor,
+                    linestyle=':',
+                    linewidth=0.5
+                    )
+
+            if self.fit_method != 'No Fit' and self.fit_results is not None:
+                if self._axis_type_frequency:
+                    x_data = self.fit_results.high_res_best_fit[0] * 1e-12
+                else:
+                    x_data = self.fit_results.high_res_best_fit[0] * 1e9
+
+                ax1.plot(x_data,
+                        self.fit_results.high_res_best_fit[1] / rescale_factor,
+                        linestyle=':',
+                        linewidth=0.5
+                        )
+
+            ax1.set_xlabel(header[0])
+            ax1.set_ylabel('Intensity ({} arb. u.)'.format(prefix))
+            figure.tight_layout()
+
+            ds.save_thumbnail(figure, file_path=file_path.rsplit('.', 1)[0])
+
+        
 
     @staticmethod
     def _get_si_scaling(number):
@@ -437,12 +526,18 @@ class SpectrometerLogic(LogicBase):
     #Spectrometer settings links
     ############################
 
+    _hw_lock=False
     def _hw_property_wrapper(self,name):
         hw_object = self.spectrometer()
         hw_class = hw_object.__class__
         def _fset(self,val):
+            if self._hw_lock:
+                self.log.error('Cannot set spectrometer, currently locked')
+                return False
+            self._hw_lock=True
             res = setattr(hw_object, name, val)
             self.sig_state_updated.emit()
+            self._hw_lock=False
             return res
         if hasattr(hw_object,name):
             return property(

@@ -54,7 +54,7 @@ class AndorSpectrometer(SpectrometerInterface):
 
     """
     _dll_location = ConfigOption('dll_location', missing='error')
-    _ini_location = ConfigOption('ini_location', default='')
+    _ini_location = ConfigOption('ini_location', missing='')
     _exposure_time = StatusVar(name='exposure_time', default=1)
     _camera = Connector(name='camera', interface='CameraInterface')
     _idx = 0  # Spectrometer Index, only supporting one spectrometer for now.
@@ -82,14 +82,13 @@ class AndorSpectrometer(SpectrometerInterface):
             2: 'OUTPUT'
         }   
     }
-    
-    #Var placeholders
-    wavelengths = None
-    grating_dict = {}
+        
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._spectrometer = None
+        self.wavelengths = None
+        self.grating_dict = {}
 
     def on_activate(self):
         """ Activate module.
@@ -117,6 +116,7 @@ class AndorSpectrometer(SpectrometerInterface):
 
             @return []: spectrum data
         """
+        self.load_calibration()
         specdata = np.empty((2, len(self.wavelengths)))
         self._camera().start_single_acquisition()
         specdata[0] = self.wavelengths
@@ -250,7 +250,7 @@ class AndorSpectrometer(SpectrometerInterface):
     
     @property
     def camera_temperature_stable(self):
-        return self.camera_temperature_status == 'DRV_TEMP_STABILIZED'
+        return self.camera_temperature_status() == 'DRV_TEMP_STABILIZED'
         
     @property 
     def camera_temperature_setpoint(self):
@@ -336,20 +336,8 @@ class AndorSpectrometer(SpectrometerInterface):
 
         Return tuple ``(lines, blaze_wavelength, home, offset)`` (blazing wavelength is in nm).
         """
-        #ctypes.POINTER(ctypes.c_float) Lines, ctypes.c_char_p Blaze, ctypes.POINTER(ctypes.c_int) Home, ctypes.POINTER(ctypes.c_int) Offset)
-        lines = c_float()
-        blaze = create_string_buffer(64)  #ctypes
-        home = c_int()
-        offset = c_int()
-        msg=ERROR_DICT[self._dll.ShamrockGetGratingInfo(self._idx,index,byref(lines),byref(blaze),byref(home),byref(offset))]
-        #return msg,vals
-        #lines,blaze_wavelength,home,offset = [val.value for val in vals]
-        if msg != "SHAMROCK_SUCCESS":
-            self.log.error(f'Error getting grating info: {msg}')
-        else:
-            return {'lines': lines.value, 'blaze_wavelength': blaze.value.decode(), 'home': home.value, 'offset': offset.value}
-        
-            
+        lines,blaze_wavelength,home,offset=self._dll.ShamrockGetGratingInfo(self._idx,index)
+        return {'lines': lines.value, 'blaze_wavelength': blaze_wavelength.value, 'home': home.value, 'offset': offset.value}
     
     def _get_grating_dict(self):
         '''Get grating enum values and return as dict {name: value}'''
@@ -359,7 +347,6 @@ class AndorSpectrometer(SpectrometerInterface):
         grating_dict['by_index'] = {}
         for i in range(1, n_gratings+1):
             info = self._get_grating_info(i)
-            #print('TEST',i,info)
             name = f"{info['lines']} lines/mm, blaze {info['blaze_wavelength']} nm"
             grating_dict['by_index'][i] = name
             grating_dict['by_name'][name] = i
@@ -399,9 +386,9 @@ class AndorSpectrometer(SpectrometerInterface):
     
     def _get_output_port(self):
         ''' Get output port, DIRECT or SIDE'''
-        flipper = c_int(self.flipper_dict['by_name']['OUTPUT'])
+        flipper = c_int(self.output_port_dict['by_name']['OUTPUT']) 
         port = c_int()
-        msg = ERROR_DICT[self._dll.ShamrockGetFlipperMirror(self._idx, flipper, byref(port))]
+        msg = ERROR_DICT[self._dll.ShamrockSetFlipperMirror(self._idx, flipper, byref(port))]
         if msg != "SHAMROCK_SUCCESS":
             self.log.error(f'Error getting output port: {msg}')
 
@@ -412,9 +399,4 @@ class AndorSpectrometer(SpectrometerInterface):
 
         return port
 
-    def _get_serial(self):
-        serial = create_string_buffer(128)
-        msg = ERROR_DICT[dll.ShamrockGetSerialNumber(self._idx, serial)]
-        if msg != "SHAMROCK_SUCCESS":
-            self.log.error(f'Error getting output port: {msg}')
-        return serial.value.decode()
+    

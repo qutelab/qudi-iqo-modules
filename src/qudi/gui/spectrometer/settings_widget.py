@@ -53,11 +53,12 @@ class SpectrometerSettingsWidget(QtWidgets.QWidget):
 
         self.exposure_time_set = QtWidgets.QDoubleSpinBox()
         self.exposure_time_set.setSuffix(' s')
-        self.exposure_time_set.setMinimum(0.001)
+        self.exposure_time_set.setRange(0.001,999999)
         self.exposure_time_set.setDecimals(3)
         self.exposure_time_set.setSingleStep(0.5) 
         main_layout.addWidget(QtWidgets.QLabel('Exposure Time:'),0,4)
         main_layout.addWidget(self.exposure_time_set,0,5)
+        
 
         self.central_wavelength_set = QtWidgets.QDoubleSpinBox()
         self.central_wavelength_set.setSuffix(' nm')

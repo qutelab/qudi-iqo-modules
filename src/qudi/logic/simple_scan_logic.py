@@ -22,7 +22,7 @@ If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import time
-import datetime
+from datetime import datetime
 import matplotlib.pyplot as plt
 from PySide2 import QtCore
 from collections.abc import Callable
@@ -484,15 +484,17 @@ class SimpleScanLogic(LogicBase):
         self._signal_data = np.mean(data[mask_incomplete],axis=0)
     
     @QtCore.Slot(str)
-    def save_data(self, tag=None, root_dir=None):
+    def save_data(self, tag=None, root_dir=None, metadata=None):
         """ Saves the current data to a file."""
         with self._threadlock:
             # Create and configure storage helper instance
-            timestamp = datetime.datetime.now()
+            timestamp = datetime.now()
             #metadata = self._get_metadata()
             if root_dir is None:
                 root_dir = self.module_default_data_dir
             tag = tag + '_' if tag else ''
+
+            metadata = metadata if metadata else {}
 
             # Save raw data in a separate file per data channel
             data_storage = TextDataStorage(root_dir=root_dir,
@@ -507,7 +509,7 @@ class SimpleScanLogic(LogicBase):
 
             # Save raw data for channel
             file_path, _, _ = data_storage.save_data(data,
-                                                        #metadata=metadata,
+                                                        metadata=metadata,
                                                         nametag=nametag,
                                                         timestamp=timestamp,
                                                         column_headers=column_headers,
@@ -522,7 +524,7 @@ class SimpleScanLogic(LogicBase):
 
             if self._signal_data is not None:
                 data_storage.save_data(data,
-                                   #metadata=metadata,
+                                   metadata=metadata,
                                    nametag=nametag,
                                    timestamp=timestamp,
                                    column_headers=column_headers,

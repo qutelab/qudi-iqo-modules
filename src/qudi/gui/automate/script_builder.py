@@ -15,10 +15,7 @@ from PySide2.QtWidgets import (
 from PySide2 import QtWidgets as qw
 from PySide2 import QtCore
 from PySide2.QtCore import Qt
-from datetime import datetime
-import matplotlib.pyplot as plt
 
-from qudi.util.datastorage import TextDataStorage
 #Logic imports for automation functions
 from qudi.logic.scanning_probe_logic import ScanningProbeLogic
 from qudi.logic.scanning_optimize_logic import ScanningOptimizeLogic
@@ -37,69 +34,6 @@ from qudi.gui.automate.grid_maker import GridApp
 #import numpy as np
 
 # ---------------------- FUNCTION CATALOG ----------------------
-from snAPI.Main import *
-import nidaqmx
-from time import sleep
-
-class PicoWorker(QtCore.QObject):
-
-    sigWorkerFinished = QtCore.Signal()
-
-    def __init__(self):
-        super().__init__()
-        self._running = False
-        self.result = None
-        self.max_time = 30000 #ms
-
-        self.sn = snAPI(systemIni=r"C:\Users\barclaylab\Anaconda3\envs\qudi-new\Lib\site-packages\snAPI\system.ini")
-        self.sn.getDevice()
-        self.sn.setLogLevel(logLevel=LogLevel.DataFile, onOff=True)
-        self.sn.initDevice(MeasMode.T3)
-        self.sn.loadIniConfig(r"C:/Users/barclaylab/qudi-new/qudi-core/src/qudi/scripts/traverse_pillars/PH330_Edge.ini")
-
-
-    def acquire_data(self):
-        with nidaqmx.Task() as task:
-            task.ao_channels.add_ao_voltage_chan("Dev1/ao3", min_val=0.0, max_val=5.0)
-            task.write(0)
-        sleep(0.1)
-        self.sn.histogram.measure(acqTime=self.max_time, savePTU=False)
-
-        counts, bins = self.sn.histogram.getData()
-        counts = counts[1]
-        self.data = np.array([bins, counts]).T
-        self.sigWorkerFinished.emit()
-
-        with nidaqmx.Task() as task:
-            task.ao_channels.add_ao_voltage_chan("Dev1/ao3", min_val=0.0, max_val=5.0)
-            task.write(3)
-        sleep(0.1)
-
-
-    def save_data(self,root_dir):
-        data_storage = TextDataStorage(root_dir=root_dir,
-                                       column_formats='.15e')
-
-        column_headers = ['Bins','Counts']
-        nametag = f'PicoLifetime_raw'
-        timestamp = datetime.now()
-
-        file_path, _, _ = data_storage.save_data(self.data,
-                                                 # metadata=metadata,
-                                                 nametag=nametag,
-                                                 timestamp=timestamp,
-                                                 column_headers=column_headers,
-                                                 column_dtypes=float)
-
-        figure = plt.figure()
-        plt.plot(self.data[:,0],self.data[:,1])
-        plt.grid()
-        plt.xlabel('ns')
-
-        fig_path = f"{file_path.rsplit('_raw.', 1)[0]}"
-        data_storage.save_thumbnail(figure, file_path=fig_path)
-
-
 class FunctionCatalog(QtCore.QObject):
     sigFuncComplete = QtCore.Signal(str)  #Emits log string when function completes, can be connected to log_result in ScriptBuilderGUI
     sigInterrupt = QtCore.Signal()
@@ -113,13 +47,6 @@ class FunctionCatalog(QtCore.QObject):
         self._functions = self._discover_functions()
         self.folder_path = None
         self._func_running=False
-
-        self.picoharp = PicoWorker()
-        self.pico_thread = QtCore.QThread()
-        self.picoharp.moveToThread(self.pico_thread)
-        self.pico_thread.start()
-
-
 
     def _discover_functions(self):
         funcs = {}
@@ -138,24 +65,30 @@ class FunctionCatalog(QtCore.QObject):
     def get_meta(self, func_name):
         return self._functions[func_name]._meta
 
-    def call(self, func_entry):
+    def call(self, func_entry, coord_label=None):
         if self._func_running:  #This shouldn't happen, but just in case prevent to functions running simultaneously
             return
         self._func_running=True
         func_name = func_entry["name"]
         func = self._functions[func_name]
         meta = func._meta
-        
+
+        start_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
+        self._metadata = {"start_position": start_position}  #Reset each call, will be passed to save functions
+        if coord_label is not None: self._metadata["coord_label"] = coord_label  #For logging grid coordinate, can be used in functions by accessing self._metadata
+
         if "params" in func_entry:
             kwargs = func_entry["params"]
             typed_kwargs = {}
             for k, spec in meta["params"].items():
-                val = kwargs.get(k, spec.get("default")(self))  #Use provided value if available, otherwise default
+                default = spec.get("default")
+                if callable(default):
+                    default = default(self)
+                val = kwargs.get(k, default)  #Use provided value if available, otherwise default
                 if type(spec["type"]) is list: #
                     typed_kwargs[k] = spec["type"][0](val)
                 else:
                     typed_kwargs[k] = spec["type"](val)  #Cast to correct type
-            print('kwargs',typed_kwargs)
             res = func(**typed_kwargs)
         else:
             res = func()
@@ -182,12 +115,12 @@ class FunctionCatalog(QtCore.QObject):
     ### Using lambda ctx in default will pull currently set values when the dialog opens, ctx is the context.
     ### Implemented types: float (DoubleSpinBox), int (SpinBox), bool (Checkbox), list(ComboBox)
     ### For lists, "type" is defined as [type], i.e. a list containing the type that will be populated in the list.
+    ###  then "entries" is required for the possible choices.
     ##############################################################################################################
 
 
     @register()
     def optimize(self):
-        #print('Start optimize')
         self._start_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
         self.optimize_logic().start_optimize()
         self.optimize_logic().sigOptimizeStateChanged.connect(self.finish_optimize, Qt.QueuedConnection)
@@ -198,7 +131,6 @@ class FunctionCatalog(QtCore.QObject):
         if (not self._func_running) or (self.optimize_logic().module_state() != 'idle'):  #state_change emits happen during intermediate steps, need to check if we're actually done
             return
         self._func_running=False
-        #print('Finished optimize')
         try:
             self.optimize_logic().sigOptimizeStateChanged.disconnect(self.finish_optimize)
             self.sigInterrupt.disconnect(self.optimize_logic().stop_optimize)
@@ -211,37 +143,43 @@ class FunctionCatalog(QtCore.QObject):
     @register(params={
         "center_wavelength": {"type": float, "default": lambda ctx: ctx.spectrometer_logic().wavelength},
         "exposure_time": {"type": float, "default": lambda ctx: ctx.spectrometer_logic().exposure_time},
-        "number_spectra": {"type": int, "default": lambda ctx: ctx.spectrometer_logic().number_spectra}
+        "number_spectra": {"type": int, "default": lambda ctx: ctx.spectrometer_logic().number_spectra},
+        "data_type": {"type":[str], "entries": ['spectrum','background'], "default": 'spectrum'},
     })
-    def record_spectrum(self, center_wavelength, exposure_time, number_spectra):
+    def record_spectrum(self, center_wavelength, exposure_time, number_spectra, data_type):
         # Implementation for recording spectrum
-        #print('Start spectrum')
         self.spectrometer_logic().wavelength = center_wavelength
         self.spectrometer_logic().exposure_time = exposure_time
-        self.spectrometer_logic().number_spectra = number_spectra
-        
-        self.spectrometer_logic().run_get_spectrum()
-        self.spectrometer_logic().sig_state_updated.connect(self.finish_record_spectrum, Qt.QueuedConnection)
+        self.spectrometer_logic().background_correction = False #For consistency
+        if data_type=='spectrum':
+            self.spectrometer_logic().number_spectra = number_spectra
+            self.spectrometer_logic().run_get_spectrum()
+        elif data_type=='background':
+            self.spectrometer_logic().number_background = number_spectra
+            self.spectrometer_logic().run_get_background()
+        self.spectrometer_logic().sig_acquisition_complete.connect(self.finish_record_spectrum, Qt.QueuedConnection)
         self.sigInterrupt.connect(self.spectrometer_logic().stop)  #Tell interrupt signal how to stop function
   
-    def finish_record_spectrum(self):
+    def finish_record_spectrum(self,data_type):
         if (self.spectrometer_logic().acquisition_running) or (not self._func_running):
             return  # State update signals will be emitted before finished.
         self._func_running=False
-        #print('Finish spectrum')
         try:
-            self.spectrometer_logic().sig_state_updated.disconnect(self.finish_record_spectrum)
+            self.spectrometer_logic().sig_acquisition_complete.disconnect(self.finish_record_spectrum)
             self.sigInterrupt.disconnect(self.spectrometer_logic().stop)
         except: 
             pass
-        self.spectrometer_logic().save_spectrum_data(root_dir=self.folder_path)
-        self.sigFuncComplete.emit(f"Recorded {self.spectrometer_logic().number_spectra} spectra "
+        if data_type=='spectrum':
+            self.spectrometer_logic().save_all_data(root_dir=self.folder_path,metadata=self._metadata)
+        elif data_type=='background':
+            self.spectrometer_logic().save_spectrum_data(background=True,root_dir=self.folder_path,metadata=self._metadata)
+        self.sigFuncComplete.emit(f"Recorded {self.spectrometer_logic().number_spectra} {data_type} "
                                   f"at {self.spectrometer_logic().wavelength} nm "
                                   f"with {self.spectrometer_logic().exposure_time} s exposure time")
         
     
     @register(params={
-        "scan_device": {"type": [str], "values": lambda ctx: ctx.simple_scan_logic().device_dict, 
+        "scan_device": {"type": [str], "entries": lambda ctx: ctx.simple_scan_logic().device_dict, 
                         "default": lambda ctx: list(ctx.simple_scan_logic().device_dict.keys())[0]},  #For listable, set values as source list.
         "x_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
         "x_end": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[1]},
@@ -253,7 +191,6 @@ class FunctionCatalog(QtCore.QObject):
     })
     def record_scan(self, scan_device, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x):
         # Implementation for recording generic v_scan. Logic will contain list of addressable devices.
-        #print('Start spectrum')
         self.simple_scan_logic().scan_device = scan_device
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
@@ -268,42 +205,16 @@ class FunctionCatalog(QtCore.QObject):
     def finish_record_scan(self, scan_success):
         self._func_running=False
         if scan_success:
-            #print('Finish spectrum')
             try:
                 self.sigInterrupt.disconnect(self.simple_scan_logic().stop_scan)
                 self.simple_scan_logic().sigScanComplete.disconnect(self.finish_record_scan)
             except: 
                 pass
-            self.simple_scan_logic().save_data(root_dir=self.folder_path)
+            self.simple_scan_logic().save_data(root_dir=self.folder_path, metadata=self._metadata)
             self.sigFuncComplete.emit(f"Done scan: {self.simple_scan_logic().x_range}")
         else:
-            #print('Scan failed')
             self.sigFuncComplete.emit(f"Scan failed")
-
-    @register(params={
-        "max_time": {"type": int, "default": lambda ctx: 30000},
-    })
-    def measure_lifetime(self, max_time):
-        # Implementation for recording spectrum
-        self.picoharp.max_time = max_time
-
-        self.picoharp.sigWorkerFinished.connect(self.finish_measure_lifetime, Qt.QueuedConnection)
-        self.picoharp.acquire_data()
-        #self.sigInterrupt.connect(self.spectrometer_logic().stop)  # Tell interrupt signal how to stop function
-
-    def finish_measure_lifetime(self):
-        if not self._func_running:
-            return  # State update signals will be emitted before finished.
-        self._func_running = False
-        # print('Finish spectrum')
-        try:
-            self.picoharp.sigWorkerFinished.disconnect()
-            #self.sigInterrupt.disconnect(self.spectrometer_logic().stop)
-        except:
-            pass
-        self.picoharp.save_data(root_dir=self.folder_path)
-        self.sigFuncComplete.emit(f"Recorded lifetime")
-
+        
 
 # ---------------------- PARAMETER DIALOG ----------------------
 class ParamDialog(QDialog):
@@ -315,21 +226,35 @@ class ParamDialog(QDialog):
         layout = QFormLayout()
 
         for name, spec in meta["params"].items():
-            
-
             if type(spec['type']) == list:
-                val = values.get(name, spec.get("values")(ctx))
+                entries = spec.get("entries")
+                if callable(entries):
+                    entries = entries(ctx)
                 widget = qw.QComboBox()
-                widget.addItems(val)
+                widget.addItems(entries)
+
+                default = spec.get("default")
+                if callable(default):
+                    default = default(ctx)
+                val = values.get(name, default)
+                widget.setCurrentText(val)
+
             elif spec['type'] == bool:
-                val = values.get(name, spec.get("default")(ctx))
+                default = spec.get("default")
+                if callable(default):
+                    default = default(ctx)
+                val = values.get(name, default)
                 widget = qw.QCheckBox()
                 widget.setChecked(val)
+
             else:
-                val = values.get(name, spec.get("default")(ctx))  #Use provided value if available, otherwise default
+                default = spec.get("default")
+                if callable(default):
+                    default = default(ctx)
+                val = values.get(name, default)  #Use provided value if available, otherwise default
                 if spec['type'] == int:
                     widget = QSpinBox()
-                    widget.setMaximum(2147483646)
+                    widget.setMaximum(99999999)  #SpinBoxes typically max at 99
                 else:
                     widget = QDoubleSpinBox()
                     widget.setRange(-1e12,1e12)  #Arbitrarily large hopefully
@@ -378,7 +303,6 @@ class ScriptBuilderGUI(GuiBase):
 
     def on_activate(self):
         self.show()
-
     def on_deactivate(self):
         pass
     def show(self):
@@ -424,6 +348,7 @@ class ScriptBuilder(QMainWindow):
         self.delete_btn = QPushButton("Delete")
         self.grid_btn = QPushButton("Create Grid")
         self.grid_checkbox = QCheckBox('Enable')
+        self.grid_checkbox.setCheckable(False)  #Disabled until grid is populated
         self.folder_btn = QPushButton("Select Folder")
         self.run_btn = QPushButton("Run Script")
         self.stop_btn = QPushButton("Stop Script")
@@ -496,15 +421,15 @@ class ScriptBuilder(QMainWindow):
             if dialog.exec_():
                 entry = {"name": func_name, "params": dialog.get_values()}
                 self.script.append(entry)
-
-                self.script_list.addItem(self._format_entry(entry))
-                self.script_list.item(self.script_list.count()-1).setData(Qt.UserRole, entry)
+            else:
+                return  #Dialog was closed.
         else:
             entry = {"name": func_name}
             self.script.append(entry)
 
-            self.script_list.addItem(func_name)
-            self.script_list.item(self.script_list.count()-1).setData(Qt.UserRole, entry)
+        self.script_list.addItem(self._format_entry(entry))
+        self.script_list.item(self.script_list.count()-1).setData(Qt.UserRole, entry)
+        self._refresh_script_order()
 
     def edit_function(self):
         idx = self.script_list.currentRow()
@@ -521,6 +446,10 @@ class ScriptBuilder(QMainWindow):
         if dialog.exec_():
             entry["params"] = dialog.get_values()
             item.setText(self._format_entry(entry))
+            self.script_list.item(idx).setData(Qt.UserRole, entry)
+            self._refresh_script_order()
+        else:
+            return  #Dialog was closed.
 
     def delete_function(self):
         idx = self.script_list.currentRow()
@@ -528,11 +457,17 @@ class ScriptBuilder(QMainWindow):
             self.script_list.takeItem(idx)
             self._refresh_script_order()
 
+    def _set_coordinate_list(self, coord_list, coord_list_CR=None):
+        self.coordinate_list = coord_list
+        self.coordinate_list_CR = coord_list_CR
+        if coord_list is not None:
+            self.grid_checkbox.setCheckable(True)
+            self.grid_checkbox.setChecked(True)
+
     def create_grid(self):
         self.grid_maker.exec()
         self._initial_z = self.parent.scanning_logic().scanner_position['z']  #Allow to start each next point at initial z.
-        self.grid_maker.sig_grid_updated.connect(lambda grid: setattr(self, "coordinate_list", grid))
-        self.grid_maker.sig_grid_updated.connect(lambda grid: self.grid_checkbox.setChecked(True))
+        self.grid_maker.sig_grid_updated.connect(self._set_coordinate_list)
 
     def select_folder(self):
         self.folder_path = QFileDialog.getExistingDirectory(self, "Select Folder")
@@ -581,13 +516,15 @@ class ScriptBuilder(QMainWindow):
 
         if (self.coordinate_list is None) or (not self.grid_checkbox.isChecked()):
             self._coordinate_list = [[self.parent.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]]
+            self._coord_labels = [None]
         else:
             self._coordinate_list = [coordI+[self._initial_z] for coordI in self.coordinate_list]
+            self._coord_labels = self.coordinate_list_CR
 
         self._refresh_script_order()
         self._set_running(True)
 
-        total = len(self._coordinate_list)*self.script_list.count()
+        total = len(self._coordinate_list)*len(self.script)
         self.progress.setMaximum(total)
         
         self._current_coord_idx = 0
@@ -608,7 +545,7 @@ class ScriptBuilder(QMainWindow):
 
     @QtCore.Slot()
     def next_script_step(self, result=None):
-        self.progress.setValue(self._current_coord_idx*self.script_list.count()+self._current_script_idx)
+        self.progress.setValue(self._current_coord_idx*len(self.script)+self._current_script_idx)
         if result is not None:
             self.log_result(result)
 
@@ -635,15 +572,13 @@ class ScriptBuilder(QMainWindow):
             self.log_result(f'{self._current_coord_idx+1}/{len(self._coordinate_list)} Moved to : {coords}')
         
         self.script_list.setCurrentRow(self._current_script_idx)
-        #print('Set to script index',self._current_script_idx)
         QApplication.processEvents()
-        #print(f'Starting script {self._current_coord_idx+1}/{len(self._coordinate_list)} ; {self._current_script_idx+1}/{self.script_list.count()}')
         entry = self.script[self._current_script_idx]
         self.log_result(f'Starting script step: {entry}')
-        self.catalog.call(entry)
+        self.catalog.call(entry, coord_label=self._coord_labels[self._current_coord_idx])
 
         self._current_script_idx += 1
-        if self._current_script_idx >= self.script_list.count():
+        if self._current_script_idx >= len(self.script):
             self._current_script_idx = 0
             self._current_coord_idx += 1
 
