@@ -24,11 +24,15 @@ __all__ = ['SpectrometerDataWidget']
 import pyqtgraph as pg
 from PySide2 import QtCore
 from PySide2 import QtWidgets
+from PySide2 import QtGui
+import os
 
 from qudi.util.colordefs import QudiPalettePale as palette
 from qudi.util.widgets.toggle_switch import ToggleSwitch
 from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 from qudi.util.widgets.fitting import FitWidget
+from qudi.util.paths import get_artwork_dir
+from qudi.util.interactivePlotAM import InteractivePlot
 
 
 class SpectrometerDataWidget(QtWidgets.QWidget):
@@ -56,6 +60,10 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
         self.fit_region_to = ScienDSpinBox()
         self.fit_region_to.setMinimumWidth(100)
         fit_region_layout.addWidget(self.fit_region_to, 1, 1)
+        fit_region_layout.addWidget(QtWidgets.QLabel('Show:'), 2, 0)
+        self.fit_region_show = QtWidgets.QCheckBox()
+        self.fit_region_show.setChecked(False)
+        fit_region_layout.addWidget(self.fit_region_show, 2, 1)
 
         target_group_box = QtWidgets.QGroupBox('Target')
         main_layout.addWidget(target_group_box, 0, 1)
@@ -97,7 +105,13 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
         self.fit_widget = FitWidget()
         main_layout.addWidget(self.fit_widget, 0, 2, 2, 1)
 
-        self.plot_widget = pg.PlotWidget(
+        #icon_path = os.path.join(get_artwork_dir(), 'icons')
+        #fit_settings_icon = QtGui.QIcon(os.path.join(icon_path, 'configure'))
+        #self.fit_settings_button = QtWidgets.QPushButton(icon = fit_settings_icon, parent=self)
+        #main_layout.addWidget(self.fit_settings_button, 0, 3)
+
+
+        self.plot_widget = InteractivePlot(
             axisItems={'bottom': CustomAxis(orientation='bottom'),
                        'left'  : CustomAxis(orientation='left')}
         )
@@ -106,8 +120,9 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
         self.plot_widget.showGrid(x=True, y=True, alpha=0.5)
 
         # Create an empty plot curve to be filled later, set its pen
-        self.data_curve = self.plot_widget.plot()
-        self.data_curve.setPen(palette.c1, width=2)
+        # self.data_curve = self.plot_widget.plot()
+        # self.data_curve.setPen(palette.c1, width=2)
+        # self.plot_widget.connect_data_item(self.data_curve)  # Connect the data item to the interactive plot widget, so that it can be used for picking points and showing values.
 
         self.fit_curve = self.plot_widget.plot()
         self.fit_curve.setPen(palette.c2, width=2)
@@ -116,14 +131,16 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
                                               brush=pg.mkBrush(122, 122, 122, 30),
                                               hoverBrush=pg.mkBrush(196, 196, 196, 30))
         self.plot_widget.addItem(self.fit_region)
+        self.fit_region.hide()  # Default, checkbox enables it.
 
-        self.target_point = pg.InfiniteLine(pos=0,
-                                            angle=90,
-                                            movable=True,
-                                            pen=pg.mkPen(color='green', width=2))
-        self.plot_widget.addItem(self.target_point)
+        # self.target_point = pg.InfiniteLine(pos=0,
+        #                                     angle=90,
+        #                                     movable=True,
+        #                                     pen=pg.mkPen(color='green', width=2))
+        # self.plot_widget.addItem(self.target_point)
+        self.target_point = self.plot_widget.snap_line
 
-        self.plot_widget.setLabel('left', 'Intensity', units='arb.u.')
+        self.plot_widget.setLabel('left', 'Intensity', units='cps')
         self.plot_widget.setLabel('bottom', 'Wavelength', units='m')
         self.plot_widget.setMinimumHeight(300)
         main_layout.addWidget(self.plot_widget, 2, 0, 1, 3)

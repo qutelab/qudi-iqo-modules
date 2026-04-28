@@ -120,6 +120,7 @@ class SpectrometerGui(GuiBase):
         )
         self._mw.data_widget.fit_region_from.editingFinished.connect(self.fit_region_value_changed)
         self._mw.data_widget.fit_region_to.editingFinished.connect(self.fit_region_value_changed)
+        self._mw.data_widget.fit_region_show.stateChanged.connect(self.fit_region_show_changed)
         self._mw.data_widget.axis_type.sigStateChanged.connect(self.axis_type_changed)
         self._mw.data_widget.plot_type.sigStateChanged.connect(self.update_data)
         self._mw.data_widget.target_x.editingFinished.connect(self.target_updated)
@@ -127,7 +128,7 @@ class SpectrometerGui(GuiBase):
 
         
         self._mw.data_widget.fit_region.sigRegionChangeFinished.connect(self.fit_region_changed)
-        self._mw.data_widget.target_point.sigPositionChangeFinished.connect(self.target_changed)
+        self._mw.data_widget.target_point.sigLineMoved.connect(self.target_changed)
 
         #Spec settings
         # fill initial settings
@@ -149,13 +150,10 @@ class SpectrometerGui(GuiBase):
         self._mw.settings_widget.exposure_time_set.editingFinished.connect(
             lambda : setattr(self._spectrometer_logic(), 'exposure_time', self._mw.settings_widget.exposure_time_set.value())
         )
-        #self._mw.settings_widget.exposure_time_set.editingFinished.connect(self._mw.settings_widget.exposure_time_set.clearFocus)  #Remove focus after editing so that mouse wheel doesn't change it by accident
         self._mw.settings_widget.central_wavelength_set.setToolTip('Press Enter to apply')
         self._mw.settings_widget.central_wavelength_set.editingFinished.connect(
             lambda : setattr(self._spectrometer_logic(), 'wavelength', self._mw.settings_widget.central_wavelength_set.value())
         )
-        #self._mw.settings_widget.central_wavelength_set.editingFinished.connect(self._mw.settings_widget.central_wavelength_set.clearFocus)  #Remove focus after editing so that mouse wheel doesn't change it by accident
-        #self._mw.settings_widget.central_wavelength_set.editingFinished.connect(lambda:print('HI'))
         self._mw.settings_widget.grating_set.currentTextChanged.connect(
             lambda text: setattr(self._spectrometer_logic(), 'grating', self._spectrometer_logic().grating_dict['by_name'][text])
         )
@@ -209,9 +207,7 @@ class SpectrometerGui(GuiBase):
         self._mw.data_widget.plot_type.sigStateChanged.disconnect()
 
         self._mw.data_widget.fit_region.sigRegionChangeFinished.disconnect()
-        self._mw.data_widget.target_point.sigPositionChangeFinished.disconnect()
-        #self._mw.settings_dialog.accepted.disconnect()
-        #self._mw.settings_dialog.rejected.disconnect()
+        self._mw.data_widget.target_point.sigLineMoved.disconnect()
 
         self._mw.settings_widget.camera_cooler_toggle.sigStateChanged.disconnect()
         self._mw.settings_widget.exposure_time_set.editingFinished.disconnect()
@@ -322,7 +318,7 @@ class SpectrometerGui(GuiBase):
         self.target_changed()
 
         # draw new data
-        self._mw.data_widget.data_curve.setData(x=x_data, y=spectrum)
+        self._mw.data_widget.plot_widget.data = x_data, spectrum
 
     def update_fit(self, fit_method, fit_results):
         """ Update the drawn fit curve.
@@ -399,6 +395,12 @@ class SpectrometerGui(GuiBase):
     def plot_type_changed(self):
         self._spectrometer_logic().axis_type_frequency = self._mw.data_widget.axis_type.isChecked()
 
+    def fit_region_show_changed(self,state):
+        if state:
+            self._mw.data_widget.fit_region.show()
+        else:
+            self._mw.data_widget.fit_region.hide()
+
     if False:
         def apply_settings(self):
             exposure_time = self._mw.settings_dialog.exposure_time_spinbox.value()
@@ -428,24 +430,13 @@ class SpectrometerGui(GuiBase):
         self._mw.settings_widget.cam_temp_display.setToolTip(f'Status: {self._spectrometer_logic().camera_temperature_status}')
 
 
-    def target_changed(self):
-        x_data = self._spectrometer_logic().x_data
-        if x_data is None:
-            return
-        start_index = -1 if self._spectrometer_logic().axis_type_frequency else 0
-        end_index = 0 if self._spectrometer_logic().axis_type_frequency else -1
-        self._target_x = self._mw.data_widget.target_point.value()
-
-        if self._target_x < min(x_data):
-            self._target_x = x_data[start_index]
-        elif self._target_x > max(x_data):
-            self._target_x = x_data[end_index]
-
-        new_y = self._spectrometer_logic().get_spectrum_at_x(self._target_x)
-        self._mw.data_widget.target_x.setValue(self._target_x)
-        self._mw.data_widget.target_y.setValue(new_y)
-
-        self._mw.data_widget.target_point.setPos(self._target_x)
+    def target_changed(self, x_value=None, y_value=None):
+        if x_value is None:
+            x_value = self._mw.data_widget.target_point.current_x()
+        if y_value is None:
+            y_value = self._mw.data_widget.target_point.current_y()
+        self._mw.data_widget.target_x.setValue(x_value)
+        self._mw.data_widget.target_y.setValue(y_value)
 
     def target_updated(self):
         self._target_x = self._mw.data_widget.target_x.value()
