@@ -26,12 +26,19 @@ from qudi.logic.simple_scan_logic import SimpleScanLogic
 from qudi.gui.automate.grid_maker import GridApp
 
 
-# ---------------------- Grid Maker ----------------------
-#from PySide2 import QtWidgets as qw
-#import pyqtgraph as pg
-#from PySide2 import QtCore
-#from unicodedata import name
-#import numpy as np
+# ###
+# Example config, make sure to extend as new connectors are added:
+# 	script_builder:
+# 			module.Class: automate.script_builder.ScriptBuilderGUI
+# 		connect:
+# 		    optimize_logic : scanning_optimize_logic
+# 			scanning_logic : scanning_probe_logic
+# 			scanning_data_logic : scanning_data_logic
+# 			spectrometer_logic : spectrometer_logic
+# 			simple_scan_logic : simple_scan_logic
+
+## To add new functions: Populate the entry in FunctionCatalog, including the register decorator and finish functions
+
 
 # ---------------------- FUNCTION CATALOG ----------------------
 class FunctionCatalog(QtCore.QObject):
@@ -47,6 +54,7 @@ class FunctionCatalog(QtCore.QObject):
         self._functions = self._discover_functions()
         self.folder_path = None
         self._func_running=False
+        self.sigFuncComplete.connect(lambda _: setattr(self,'_func_running',False))
 
     def _discover_functions(self):
         funcs = {}
@@ -130,7 +138,6 @@ class FunctionCatalog(QtCore.QObject):
     def finish_optimize(self):
         if (not self._func_running) or (self.optimize_logic().module_state() != 'idle'):  #state_change emits happen during intermediate steps, need to check if we're actually done
             return
-        self._func_running=False
         try:
             self.optimize_logic().sigOptimizeStateChanged.disconnect(self.finish_optimize)
             self.sigInterrupt.disconnect(self.optimize_logic().stop_optimize)
@@ -163,7 +170,6 @@ class FunctionCatalog(QtCore.QObject):
     def finish_record_spectrum(self,data_type):
         if (self.spectrometer_logic().acquisition_running) or (not self._func_running):
             return  # State update signals will be emitted before finished.
-        self._func_running=False
         try:
             self.spectrometer_logic().sig_acquisition_complete.disconnect(self.finish_record_spectrum)
             self.sigInterrupt.disconnect(self.spectrometer_logic().stop)
@@ -203,7 +209,6 @@ class FunctionCatalog(QtCore.QObject):
         self.sigInterrupt.connect(self.simple_scan_logic().stop_scan)  #Tell interrupt signal how to stop function
 
     def finish_record_scan(self, scan_success):
-        self._func_running=False
         if scan_success:
             try:
                 self.sigInterrupt.disconnect(self.simple_scan_logic().stop_scan)
@@ -214,6 +219,23 @@ class FunctionCatalog(QtCore.QObject):
             self.sigFuncComplete.emit(f"Done scan: {self.simple_scan_logic().x_range}")
         else:
             self.sigFuncComplete.emit(f"Scan failed")
+
+    _loop_list = []  #Allow for nested loops
+    @register(params={"loop_count": {"type": int, "default": 1}})
+    def LOOP_START(self, loop_count):
+        self._loop_list.append( (loop_count, 0, self.parent._mw._current_script_idx) )
+        self.sigFuncComplete.emit(f"Starting loop of {loop_count} iterations")
+
+    @register()
+    def LOOP_END(self):
+        loop = self._loop_list[-1]
+        if loop[1] < loop[0]-1:  #If we haven't reached the end of the loop, jump back to start
+            self.parent._mw._current_script_idx = loop[2]  #Jump back to the function after loop_start
+            self._loop_list[-1] = (loop[0], loop[1]+1, loop[2])  #Update loop count
+            self.sigFuncComplete.emit(f"Loop iteration {loop[1]+2} of {loop[0]}")
+        else:  #Otherwise, we're done with the loop, pop it from the list and continue
+            self._loop_list.pop()
+            self.sigFuncComplete.emit(f"Finished loop of {loop[0]} iterations")
         
 
 # ---------------------- PARAMETER DIALOG ----------------------
@@ -359,8 +381,8 @@ class ScriptBuilder(QMainWindow):
         self.delete_btn.clicked.connect(self.delete_function)
         self.grid_btn.clicked.connect(self.create_grid)
         self.folder_btn.clicked.connect(self.select_folder)
-        self.run_btn.clicked.connect(self.start_script)
-        self.stop_btn.clicked.connect(lambda: self.finish_script(True))
+        self.run_btn.clicked.connect(self.start_script, Qt.QueuedConnection)
+        self.stop_btn.clicked.connect(lambda: self.finish_script(True), Qt.QueuedConnection)
         self.save_btn.clicked.connect(self.save_script)
         self.load_btn.clicked.connect(self.load_script)
 
@@ -538,7 +560,8 @@ class ScriptBuilder(QMainWindow):
             self.catalog.sigFuncComplete.disconnect(self.next_script_step)  #In case this was left connected.
         except:
             pass
-        self.catalog.sigFuncComplete.connect(self.next_script_step)  #Connect function completion signal to next step
+        self.catalog.sigFuncComplete.connect(self.next_script_step, Qt.QueuedConnection)  #Connect function completion signal to next step
+        
 
         self.next_script_step()  #Start first step
 
@@ -576,7 +599,6 @@ class ScriptBuilder(QMainWindow):
         entry = self.script[self._current_script_idx]
         self.log_result(f'Starting script step: {entry}')
         self.catalog.call(entry, coord_label=self._coord_labels[self._current_coord_idx])
-
         self._current_script_idx += 1
         if self._current_script_idx >= len(self.script):
             self._current_script_idx = 0
