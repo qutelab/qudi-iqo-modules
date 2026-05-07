@@ -108,6 +108,7 @@ class OdmrScanControlDockWidget(AdvancedDockWidget):
     """
     sigRangeCountChanged = QtCore.Signal(int)
     sigRangeChanged = QtCore.Signal(float, float, int, int)
+    sigRandomizeChanged = QtCore.Signal(bool)
     sigRuntimeChanged = QtCore.Signal(float)
     sigPowerChanged = QtCore.Signal(float)
     sigAveragedScansChanged = QtCore.Signal(int)
@@ -228,6 +229,13 @@ class OdmrScanControlDockWidget(AdvancedDockWidget):
         self._range_index_spinbox.setRange(0, 0)
         self._range_index_spinbox.valueChanged.connect(self._data_selection_changed_cb)
         layout.addWidget(self._range_index_spinbox, 1, 3)
+
+        label = QtWidgets.QLabel('Randomize:')
+        label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        layout.addWidget(label, 2, 0)
+        self._randomize_checkbox = QtWidgets.QCheckBox()
+        self._randomize_checkbox.stateChanged.connect(lambda: self.sigRandomizeChanged.emit(self._randomize_checkbox.isChecked()))
+        layout.addWidget(self._randomize_checkbox, 2, 1)
 
         group_box.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         main_layout.addWidget(group_box)

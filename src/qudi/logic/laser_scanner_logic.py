@@ -34,6 +34,7 @@ from qudi.core.statusvariable import StatusVar
 from qudi.util.mutex import RecursiveMutex
 from qudi.core.module import LogicBase
 from qtpy import QtCore
+from qudi.interface.scanning_probe_interface import ScanningProbeInterface
 
 
 class LaserScannerLogic(LogicBase):
@@ -49,7 +50,7 @@ class LaserScannerLogic(LogicBase):
     sig_data_updated = QtCore.Signal()
 
     # declare connectors
-    confocalscanner1 = Connector(interface='ConfocalScannerInterface')
+    confocalscanner1 = Connector(name='scanner', interface=ScanningProbeInterface)
     savelogic = Connector(interface='SaveLogic')
 
     scan_range = StatusVar('scan_range', [-10, 10])

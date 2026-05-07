@@ -622,7 +622,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
 
                     task.timing.cfg_implicit_timing(
                         sample_mode=ni.constants.AcquisitionType.FINITE,
-                        samps_per_chan=self._frame_size)
+                        samps_per_chan=self._frame_size+1)
                 except ni.DaqError:
                     try:
                         task.close()

@@ -24,6 +24,7 @@ __all__ = ('OdmrPlotWidget',)
 
 import pyqtgraph as pg
 from PySide2 import QtCore, QtWidgets
+import numpy as np
 
 from qudi.util.widgets.plotting.plot_item import DataImageItem
 from qudi.util.widgets.plotting.colorbar import ColorBarWidget
@@ -76,7 +77,7 @@ class OdmrPlotWidget(QtWidgets.QWidget):
         # self._image_widget.setAspectLocked(lock=True, ratio=1.0)
         self._image_widget.setLabel('bottom', text='Frequency', units='Hz')
         self._image_widget.setLabel('left', text='Scan Line')
-        main_layout.addWidget(self._image_widget, 1, 0)
+        main_layout.addWidget(self._image_widget, 1, 0, 2, 1)
 
         # Create colorbar
         self._colorbar = ColorBarWidget()
@@ -90,6 +91,11 @@ class OdmrPlotWidget(QtWidgets.QWidget):
         self._colorbar.sigLimitsChanged.connect(self._colorbar_limits_changed)
         self._colorbar.sigPercentilesChanged.connect(self._colorbar_percentiles_changed)
         main_layout.addWidget(self._colorbar, 0, 1, 2, 1)
+
+        #Create plot options
+        self._plot_normalize_checkbox = QtWidgets.QCheckBox('Line Normalize')
+        self._plot_normalize_checkbox.setToolTip('Normalize each line of the image to its mean value.')
+        main_layout.addWidget(self._plot_normalize_checkbox, 2, 1)
 
     def set_signal_label(self, channel, unit):
         self._plot_widget.setLabel('left', text=channel, units=unit)
@@ -107,6 +113,13 @@ class OdmrPlotWidget(QtWidgets.QWidget):
         if data is None:
             self._image_item.clear()
         else:
+            data = data[:,np.isfinite(data).any(axis=0)]
+            if self._plot_normalize_checkbox.isChecked():
+                try:
+                    data = data * (np.mean(data)/np.mean(data,axis=0)).reshape((1,data.shape[1]))  # array is immutable so this doesn't affect original data
+                except: 
+                    self.log.warning('Normalization failed')
+                    self._plot_normalize_checkbox.setChecked(False)
             if self._colorbar.mode is ColorBarWidget.ColorBarMode.PERCENTILE:
                 self._image_item.set_image(image=data, autoLevels=False)
                 levels = self._image_item.levels
@@ -116,6 +129,11 @@ class OdmrPlotWidget(QtWidgets.QWidget):
                 self._image_item.set_image(image=data,
                                            autoLevels=False,
                                            levels=self._colorbar.limits)
+            #TODO: figure out how to do this so the plot always has the shape of the max shown scans. Problem, this variable is stored in odmrgui, but that's the parent of the parent of this window.
+            #try: num_lines = self.parent()._max_shown_scans
+            ##except Exception as e: 
+            #    print('error',e)
+            #    num_lines = data.shape[1]
             if frequency is not None:
                 self._image_item.set_image_extent(
                     ((frequency[0], frequency[-1]), (0, data.shape[1]))

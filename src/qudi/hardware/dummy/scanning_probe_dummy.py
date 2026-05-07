@@ -91,7 +91,6 @@ class ImageGenerator:
         if not spot_count:
             spot_count = 1
 
-        spot_amplitudes = np.random.normal(self.spot_amplitude_dist[0], self.spot_amplitude_dist[1], spot_count)
 
         # scan bounds per axis.
         position_ranges = np.array(list(self.position_ranges.values()))
@@ -99,9 +98,20 @@ class ImageGenerator:
         ax_maxs = position_ranges[:, 1]
 
         # vectorized generation of random spot positions and sigmas. Each row is a spot.
-        spot_positions = np.random.uniform(ax_mins, ax_maxs, (spot_count, len(self.position_ranges)))
+        if False:
+            spot_positions = np.random.uniform(ax_mins, ax_maxs, (spot_count, len(self.position_ranges)))
+        else:
+            #Create a uniform grid of 25x25 with all points at center of z-range
+            xcoords = np.linspace(*position_ranges[0],25)
+            ycoords = np.linspace(*position_ranges[1],25)
+            zcoords = np.mean(position_ranges[2])
+
+            xyz_grid = np.stack(np.meshgrid(xcoords,ycoords,zcoords,indexing='ij'),axis=-1)
+            spot_positions = xyz_grid.reshape((np.product(xyz_grid.shape[:-1]),3))
+
+        spot_amplitudes = np.random.normal(self.spot_amplitude_dist[0], self.spot_amplitude_dist[1], spot_positions.shape[0])
         spot_sigmas = np.random.normal(
-            self.spot_size_dist[0], self.spot_size_dist[1], (spot_count, len(self.position_ranges))
+            self.spot_size_dist[0], self.spot_size_dist[1], spot_positions.shape
         )
 
         self._spots["count"] = spot_count

@@ -194,6 +194,8 @@ class OdmrGui(GuiBase):
         )
         self._scan_control_dockwidget.sigDataSelectionChanged.connect(self._data_selection_changed)
 
+        self._scan_control_dockwidget.sigRandomizeChanged.connect(lambda state: setattr(logic,'_shuffle_freqs',state))
+
         self._odmr_settings_dialog.button_box.button(QtWidgets.QDialogButtonBox.Apply).clicked.connect(
             self._apply_odmr_settings
         )
@@ -209,6 +211,7 @@ class OdmrGui(GuiBase):
         self.sigToggleScan.connect(logic.toggle_odmr_scan, QtCore.Qt.QueuedConnection)
         self.sigToggleCw.connect(logic.toggle_cw_output, QtCore.Qt.QueuedConnection)
         self.sigDoFit.connect(logic.do_fit, QtCore.Qt.QueuedConnection)
+        self._plot_widget._plot_normalize_checkbox.stateChanged.connect(self._update_scan_data)
         self.sigSaveData.connect(logic.save_odmr_data, QtCore.Qt.QueuedConnection)
 
     def __connect_logic_signals(self):
@@ -372,13 +375,16 @@ class OdmrGui(GuiBase):
         range_index = self._scan_control_dockwidget.selected_range
         channel = self._scan_control_dockwidget.selected_channel
         logic = self._odmr_logic()
-        signal_data = logic.signal_data
+        signal_data = logic.signal_data[channel][range_index]
         raw_data = logic.raw_data
-        frequency_data = logic.frequency_data
+        frequency_data = logic.frequency_data[range_index]
+        raw_data_plot = raw_data[channel][range_index]
+        raw_data_plot = raw_data_plot[:,np.isfinite(raw_data_plot).any(axis=0)]  # remove nans
+        raw_data_plot = raw_data_plot[:,:self._max_shown_scans] # Data are ordered such that newest are first.
         self._plot_widget.set_data(
-            frequency_data[range_index],
-            raw_data[channel][range_index][:, :self._max_shown_scans],
-            signal_data[channel][range_index]
+            frequency_data,
+            raw_data_plot,
+            signal_data
         )
 
     def _update_scan_parameters(self, param_dict=None):

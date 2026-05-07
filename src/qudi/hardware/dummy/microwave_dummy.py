@@ -50,6 +50,8 @@ class MicrowaveDummy(MicrowaveInterface):
         self._scan_sample_rate = -1.
         self._scan_mode = SamplingOutputMode.JUMP_LIST
         self._is_scanning = False
+        self._frequency = None
+        self._scan_idx = 0
 
     def on_activate(self):
         """ Initialisation performed during activation of the module.
@@ -244,8 +246,31 @@ class MicrowaveDummy(MicrowaveInterface):
                 )
             self.module_state.lock()
             self._is_scanning = True
+            self._frequency = self._scan_frequencies[0]
             time.sleep(1)
             self.log.debug(f'Starting frequency scan in "{self._scan_mode.name}" mode')
+
+    def next_scan_frequency(self):
+        """Switches to the next frequency in the currently configured scan.
+
+        Must return AFTER the device has actually switched to the next frequency.
+        """
+        with self._thread_lock:
+            if self.module_state() == 'idle':
+                raise RuntimeError('Unable to switch to next scan frequency. Microwave output is idle.')
+            #if self._in_cw_mode:
+                #raise RuntimeError('Unable to switch to next scan frequency. CW microwave output active.')
+
+            #self._write('*TRG')
+            self._scan_idx+=1
+            if self._scan_idx==len(self._scan_frequencies):
+                self._scan_idx=0
+                
+            self._frequency = self._scan_frequencies[self._scan_idx]
+            #print('Set scan frequency to ',self._scan_idx,self._frequency)
+            
+            self.log.debug('Switched to next scan frequency')
+            pass
 
     def reset_scan(self):
         """Reset currently running scan and return to start frequency.
@@ -253,5 +278,6 @@ class MicrowaveDummy(MicrowaveInterface):
         """
         with self._thread_lock:
             if self._is_scanning:
+                self._frequency = self._scan_frequencies[0]
                 self.log.debug('Frequency scan soft reset')
                 time.sleep(0.5)

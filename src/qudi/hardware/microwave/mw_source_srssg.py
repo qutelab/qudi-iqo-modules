@@ -281,6 +281,19 @@ class MicrowaveSRSSG(MicrowaveInterface):
             self._in_cw_mode = False
             self._rf_on()
             self.module_state.lock()
+    
+    def next_scan_frequency(self):
+        """Switches to the next frequency in the currently configured scan.
+
+        Must return AFTER the device has actually switched to the next frequency.
+        """
+        with self._thread_lock:
+            if self.module_state() == 'idle':
+                raise RuntimeError('Unable to switch to next scan frequency. Microwave output is idle.')
+            if self._in_cw_mode:
+                raise RuntimeError('Unable to switch to next scan frequency. CW microwave output active.')
+
+            self._write('*TRG')
 
     def reset_scan(self):
         """Reset currently running scan and return to start frequency.

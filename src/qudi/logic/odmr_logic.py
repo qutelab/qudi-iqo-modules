@@ -22,7 +22,7 @@ If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import time
-import datetime
+from datetime import datetime
 import matplotlib.pyplot as plt
 from PySide2 import QtCore
 
@@ -70,6 +70,7 @@ class OdmrLogic(LogicBase):
     _scan_power = StatusVar(name='scan_power', default=-np.inf)
     _scan_frequency_ranges = StatusVar(name='scan_frequency_ranges',
                                        default=[(2820e6, 2920e6, 101)])
+    _shuffle_freqs = StatusVar(name='shuffle_freqs',default=True)
     _run_time = StatusVar(name='run_time', default=60)
     _scans_to_average = StatusVar(name='scans_to_average', default=0)
     _data_rate = StatusVar(name='data_rate', default=200)
@@ -126,6 +127,9 @@ class OdmrLogic(LogicBase):
         self._signal_data = None
         self._frequency_data = None
         self._fit_results = None
+
+        self._debug_fdependence = False
+
 
     def on_activate(self):
         """
@@ -191,7 +195,7 @@ class OdmrLogic(LogicBase):
     def _initialize_odmr_data(self):
         """ Initializing the ODMR data arrays (signal and raw data matrix). """
         self._frequency_data = [np.linspace(*r) for r in self._scan_frequency_ranges]
-
+        
         self._raw_data = dict()
         self._fit_results = dict()
         self._signal_data = dict()
@@ -531,17 +535,17 @@ class OdmrLogic(LogicBase):
                     frequencies = np.concatenate(self._frequency_data)
                     if self._oversampling_factor > 1:
                         frequencies = np.repeat(frequencies, self._oversampling_factor)
-                    samples = len(frequencies)
-                elif mode == SamplingOutputMode.EQUIDISTANT_SWEEP:
-                    frequencies = self._scan_frequency_ranges[0]
-                    samples = frequencies[-1]
+                    self.samples = len(frequencies)
+                #elif mode == SamplingOutputMode.EQUIDISTANT_SWEEP:  ## Is this even being used?
+                #    frequencies = self._scan_frequency_ranges[0]
+                #    samples = frequencies[-1]
 
                 # Set up data acquisition device
                 sampler.set_sample_rate(sample_rate)
-                sampler.set_frame_size(samples)
+                sampler.set_frame_size(2)  # Minimum two values at a time (NIDAQ requirement)
                 # Set up microwave scan and start it
                 microwave.configure_scan(self._scan_power, frequencies, mode, sample_rate)
-                microwave.start_scan()
+                microwave.start_scan()  #Enables output, but scan steps are performed manually in _scan_line_manual method called by _scan_odmr_line
             except:
                 self.module_state.unlock()
                 self.log.exception('Unable to start ODMR scan. Error while setting up hardware:')
@@ -607,6 +611,32 @@ class OdmrLogic(LogicBase):
                 self.sigScanDataUpdated.emit()
                 self._start_time = time.time()
 
+    def _scan_line_manual(self):
+        """ Method to perform a single scan line, manually stepping through each frequency.
+        """
+        
+        scanner = self._data_scanner()
+        microwave = self._microwave()
+
+        new_line = None
+        for ii in range(self.samples):
+            if self.module_state() != 'locked':
+                return new_line  #Return line as is if measurement interrupted
+            dataI = scanner.acquire_frame()  #Acquire 2 data points per channel (minimum, keep 2nd)
+            if new_line is None:
+                new_line = {ch: np.full(self.samples, np.nan) for ch in dataI} #Pre-allocate array
+            for ch in new_line:
+                new_line[ch][ii] = dataI[ch][-1]  #Add acquired data point to new_line array, always gets 2 data points, and stores the 2nd.
+                if self._debug_fdependence:
+                    new_line[ch][ii] += microwave._frequency
+                    print('debug:',microwave._frequency)
+
+            microwave.next_scan_frequency()
+        
+        return new_line
+
+
+    
     @QtCore.Slot()
     def _scan_odmr_line(self):
         """ Perform a single scan over the specified frequency range
@@ -617,8 +647,25 @@ class OdmrLogic(LogicBase):
                 return
 
             try:
-                scanner = self._data_scanner()
-                new_counts = scanner.acquire_frame()
+                #scanner = self._data_scanner()
+                #new_counts = scanner.acquire_frame()
+                if self._shuffle_freqs:
+                    frequencies = self._microwave()._scan_frequencies.copy()
+                    rand = np.arange(len(frequencies))
+                    np.random.shuffle(rand)
+                    randrev = np.argsort(rand)
+                    frequencies = frequencies[rand]
+
+                    self._microwave()._scan_frequencies = frequencies
+                    self._microwave().reset_scan()
+
+                new_counts = self._scan_line_manual()
+
+                if self._shuffle_freqs:
+                    for key,counts in new_counts.items():
+                        new_counts[key] = counts[randrev]  #Re-order
+                    self._microwave()._scan_frequencies = frequencies[randrev]
+
                 if self._oversampling_factor > 1:
                     for ch in new_counts:
                         new_counts[ch] = np.mean(
@@ -752,7 +799,7 @@ class OdmrLogic(LogicBase):
         """ Saves the current ODMR data to a file."""
         with self._threadlock:
             # Create and configure storage helper instance
-            timestamp = datetime.datetime.now()
+            timestamp = datetime.now()
             metadata = self._get_metadata()
             tag = tag + '_' if tag else ''
 
@@ -795,6 +842,7 @@ class OdmrLogic(LogicBase):
                                    timestamp=timestamp,
                                    column_headers=column_headers,
                                    column_dtypes=[float] * len(column_headers))
+            self.log.info(f'ODMR data saved to {file_path}')
 
     def _draw_figure(self, channel, range_index):
         """ Draw the summary figure to save with the data.
