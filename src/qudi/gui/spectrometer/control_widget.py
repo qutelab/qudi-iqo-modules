@@ -21,8 +21,8 @@ If not, see <https://www.gnu.org/licenses/>.
 
 __all__ = ['SpectrometerControlWidget']
 
-from PySide2 import QtCore
-from PySide2 import QtWidgets
+from PySide6 import QtCore
+from PySide6 import QtWidgets
 
 from qudi.util.widgets.toggle_switch import ToggleSwitch
 
@@ -35,7 +35,7 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
 
         main_layout = QtWidgets.QGridLayout()
         self.setLayout(main_layout)
-        # main_layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        # main_layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
         # main_layout.setContentsMargins(1, 1, 1, 1)
         # main_layout.setSpacing(5)
 
@@ -54,8 +54,8 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         self.save_spectrum_button.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self.save_spectrum_button.setSizePolicy(QtWidgets.QSizePolicy.Minimum,
-                                                QtWidgets.QSizePolicy.Fixed)
+        self.save_spectrum_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum,
+                                                QtWidgets.QSizePolicy.Policy.Fixed)
         main_layout.addWidget(self.save_spectrum_button, 0, 2)
 
         self.background_button = QtWidgets.QPushButton('Acquire Background')
@@ -66,8 +66,8 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         self.save_background_button.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self.save_background_button.setSizePolicy(QtWidgets.QSizePolicy.Minimum,
-                                                  QtWidgets.QSizePolicy.Fixed)
+        self.save_background_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum,
+                                                  QtWidgets.QSizePolicy.Policy.Fixed)
         main_layout.addWidget(self.save_background_button, 1, 2)
 
         self.progress_bar = QtWidgets.QProgressBar()
@@ -77,8 +77,8 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
 
         # Add separator
         separator = QtWidgets.QFrame()
-        separator.setFrameShape(QtWidgets.QFrame.VLine)
-        separator.setFrameShadow(QtWidgets.QFrame.Sunken)
+        separator.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        separator.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         main_layout.addWidget(separator, 0, 3, 3, 1)
 
         # Control switches
@@ -86,7 +86,7 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         switchII=0
         
         number_spectra_label = QtWidgets.QLabel('Number of Spectra:')
-        number_spectra_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        number_spectra_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.number_spectra_input = QtWidgets.QSpinBox()
         self.number_spectra_input.setMinimum(-1)
         self.number_spectra_input.setValue(1)
@@ -96,7 +96,7 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         
         switchII += 1
         number_background_label = QtWidgets.QLabel('Number of Background:')
-        number_background_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        number_background_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.number_background_input = QtWidgets.QSpinBox()
         self.number_background_input.setMinimum(-1)
         self.number_background_input.setValue(1)
@@ -106,7 +106,7 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
 
         switchII += 1
         background_correction_label = QtWidgets.QLabel('Background Correction:')
-        background_correction_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        background_correction_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.background_correction_switch = ToggleSwitch(state_names=('Off', 'On'))
         self.background_correction_switch.setFixedWidth(
             background_correction_label.sizeHint().width()
@@ -119,7 +119,7 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
 
         switchII += 1
         differential_spectrum_label = QtWidgets.QLabel('Differential Spectrum:')
-        differential_spectrum_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        differential_spectrum_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.differential_spectrum_switch = ToggleSwitch(state_names=('Off', 'On'))
         if False:  #Don't have modulator for differential, hide this.
             switch_layout.addWidget(differential_spectrum_label, 2, 0)

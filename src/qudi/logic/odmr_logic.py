@@ -24,7 +24,7 @@ import numpy as np
 import time
 from datetime import datetime
 import matplotlib.pyplot as plt
-from PySide2 import QtCore
+from PySide6 import QtCore
 
 from qudi.util.datafitting import FitContainer, FitConfigurationsModel
 from qudi.core.module import LogicBase
@@ -169,7 +169,7 @@ class OdmrLogic(LogicBase):
         self._initialize_odmr_data()
 
         # Connect signals
-        self._sigNextLine.connect(self._scan_odmr_line, QtCore.Qt.QueuedConnection)
+        self._sigNextLine.connect(self._scan_odmr_line, QtCore.Qt.ConnectionType.QueuedConnection)
 
     def on_deactivate(self):
         """ Deinitialisation performed during deactivation of the module.
