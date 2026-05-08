@@ -107,7 +107,7 @@ class ImageGenerator:
             zcoords = np.mean(position_ranges[2])
 
             xyz_grid = np.stack(np.meshgrid(xcoords,ycoords,zcoords,indexing='ij'),axis=-1)
-            spot_positions = xyz_grid.reshape((np.product(xyz_grid.shape[:-1]),3))
+            spot_positions = xyz_grid.reshape((np.prod(xyz_grid.shape[:-1]),3))
 
         spot_amplitudes = np.random.normal(self.spot_amplitude_dist[0], self.spot_amplitude_dist[1], spot_positions.shape[0])
         spot_sigmas = np.random.normal(

@@ -1,8 +1,8 @@
 import sys
 from unicodedata import name
 import numpy as np
-from PySide2 import QtWidgets as qw
-from PySide2 import QtCore
+from PySide6 import QtWidgets as qw
+from PySide6 import QtCore
 import pyqtgraph as pg
 from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 

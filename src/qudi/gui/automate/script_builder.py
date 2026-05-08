@@ -7,14 +7,14 @@ from turtle import position
 
 from qudi.core.module import GuiBase
 from qudi.core.connector import Connector
-from PySide2.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QListWidget,
     QHBoxLayout, QDialog, QLabel, QFileDialog, QMessageBox,
     QCheckBox, QFormLayout, QSpinBox, QDoubleSpinBox, QProgressBar, QMainWindow
 )
-from PySide2 import QtWidgets as qw
-from PySide2 import QtCore
-from PySide2.QtCore import Qt
+from PySide6 import QtWidgets as qw
+from PySide6 import QtCore
+from PySide6.QtCore import Qt
 
 #Logic imports for automation functions
 from qudi.logic.scanning_probe_logic import ScanningProbeLogic
@@ -440,7 +440,7 @@ class ScriptBuilder(QMainWindow):
 
         if len(meta["params"]) != 0:
             dialog = ParamDialog(self.catalog, func_name, meta)
-            if dialog.exec_():
+            if dialog.exec():
                 entry = {"name": func_name, "params": dialog.get_values()}
                 self.script.append(entry)
             else:

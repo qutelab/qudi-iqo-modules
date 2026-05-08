@@ -24,7 +24,7 @@ import numpy as np
 import time
 from datetime import datetime
 import matplotlib.pyplot as plt
-from PySide2 import QtCore
+from PySide6 import QtCore
 from collections.abc import Callable
 
 from qudi.util.datafitting import FitContainer, FitConfigurationsModel

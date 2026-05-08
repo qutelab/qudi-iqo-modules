@@ -38,14 +38,14 @@ Controls (when data is loaded):
     Ctrl + ← / →        → jump to previous / next guide_values entry
     Click elsewhere     → deselect
 
-Requires: PySide2, pyqtgraph, numpy
-    pip install PySide2 pyqtgraph numpy
+Requires: PySide6, pyqtgraph, numpy
+    pip install PySide6 pyqtgraph numpy
 """
 
 import sys
 import os
 
-os.environ["PYQTGRAPH_QT_LIB"] = "PySide2"
+os.environ["PYQTGRAPH_QT_LIB"] = "PySide6"
 
 import numpy as np
 import pyqtgraph as pg
