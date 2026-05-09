@@ -128,7 +128,7 @@ class OdmrLogic(LogicBase):
         self._frequency_data = None
         self._fit_results = None
 
-        self._debug_fdependence = False
+        self._debug_frequency = True  # If True, outputted values will be frequency dependent, and order dependent, only for Microwave dummy
 
 
     def on_activate(self):
@@ -443,7 +443,8 @@ class OdmrLogic(LogicBase):
                   'frequency_ranges': self.frequency_ranges,
                   'run_time': self._run_time,
                   'averaged_scans': self._scans_to_average,
-                  'power': self._scan_power}
+                  'power': self._scan_power,
+                  'shuffle_freqs': self._shuffle_freqs}
         return params
 
     @property
@@ -627,9 +628,8 @@ class OdmrLogic(LogicBase):
                 new_line = {ch: np.full(self.samples, np.nan) for ch in dataI} #Pre-allocate array
             for ch in new_line:
                 new_line[ch][ii] = dataI[ch][-1]  #Add acquired data point to new_line array, always gets 2 data points, and stores the 2nd.
-                if self._debug_fdependence:
-                    new_line[ch][ii] += microwave._frequency
-                    print('debug:',microwave._frequency)
+                if self._debug_frequency and (microwave._meta['name'] == 'microwave_dummy'):
+                    new_line[ch][ii] += microwave._frequency/1e8 + ii/10
 
             microwave.next_scan_frequency()
         

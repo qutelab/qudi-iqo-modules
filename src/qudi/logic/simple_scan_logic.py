@@ -51,8 +51,8 @@ class SimpleScanLogic(LogicBase):
     simple_scan_logic:
         module.Class: 'simple_scan_logic.SimpleScanLogic'
         connect:
-            laser: <laser_name>
-            data_scanner: <data_scanner_name>
+            laser: laser_dummy
+            data_scanner: finite_sampling_input_dummy
     """
 
     # declare connectors

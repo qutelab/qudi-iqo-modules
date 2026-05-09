@@ -427,6 +427,10 @@ class OdmrGui(GuiBase):
             for ii, range_tuple in enumerate(param):
                 self._scan_control_dockwidget.set_frequency_range(range_tuple, ii)
 
+        param = param_dict.get('shuffle_freqs')
+        if param is not None:
+            self._scan_control_dockwidget._randomize_checkbox.setChecked(param)
+
     def _data_selection_changed(self, channel=None, range_index=None):
         if channel is None:
             channel = self._scan_control_dockwidget.selected_channel

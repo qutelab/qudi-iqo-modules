@@ -465,7 +465,7 @@ class ScriptBuilder(QMainWindow):
             return
 
         dialog = ParamDialog(self.catalog, entry["name"], meta, entry["params"])
-        if dialog.exec_():
+        if dialog.exec():
             entry["params"] = dialog.get_values()
             item.setText(self._format_entry(entry))
             self.script_list.item(idx).setData(Qt.UserRole, entry)
@@ -637,4 +637,4 @@ if __name__ == "__main__":
     window = ScriptBuilder()
     window.resize(1000, 600)
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

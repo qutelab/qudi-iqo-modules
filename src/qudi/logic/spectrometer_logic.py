@@ -66,8 +66,8 @@ class SpectrometerLogic(LogicBase):
     _fit_config = StatusVar(name='fit_config', default=dict())
 
     # Internal signals
-    _sig_get_spectrum = QtCore.Signal(int, bool, bool)
-    _sig_get_background = QtCore.Signal(int, bool)
+    _sig_get_spectrum = QtCore.Signal(object, object, bool)  #Need object to pass None.
+    _sig_get_background = QtCore.Signal(object, bool)
 
     # External signals eg for GUI module
     sig_data_updated = QtCore.Signal()

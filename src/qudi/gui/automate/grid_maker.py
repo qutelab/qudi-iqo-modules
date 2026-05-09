@@ -122,7 +122,7 @@ class GridApp(qw.QWidget):
     def update_image(self):
         (xmin, xmax), (ymin, ymax) = self.extent
         self.img.setImage(self.data.T)
-        self.img.setRect(pg.QtCore.QRectF(xmin, ymin, xmax - xmin, ymax - ymin))
+        self.img.setRect(QtCore.QRectF(xmin, ymin, xmax - xmin, ymax - ymin))
 
     def set_pick_mode(self, corner):
         self.pick_mode = corner
