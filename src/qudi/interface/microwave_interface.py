@@ -185,18 +185,20 @@ class MicrowaveInterface(Base):
         """
         raise NotImplementedError
 
-    def _assert_cw_parameters_args(self, frequency: float, power: float) -> None:
+    def _assert_cw_parameters_args(self, frequency: float=None, power: float=None) -> None:
         """ Helper method to unify argument type and value checking against hardware constraints.
         Useful in implementation of "set_cw()".
         """
         # Check power
-        assert self.constraints.power_in_range(power)[0], \
-            f'CW power to set ({power} dBm) is out of bounds for allowed range ' \
-            f'{self.constraints.power_limits}'
+        if power is not None:
+            assert self.constraints.power_in_range(power)[0], \
+                f'CW power to set ({power} dBm) is out of bounds for allowed range ' \
+                f'{self.constraints.power_limits}'
         # Check frequency
-        assert self.constraints.frequency_in_range(frequency)[0], \
-            f'CW frequency to set ({frequency:.9e} Hz) is out of bounds for allowed range ' \
-            f'{self.constraints.frequency_limits}'
+        if frequency is not None:
+            assert self.constraints.frequency_in_range(frequency)[0], \
+                f'CW frequency to set ({frequency:.9e} Hz) is out of bounds for allowed range ' \
+                f'{self.constraints.frequency_limits}'
 
     def _assert_scan_configuration_args(self, power: float, frequencies: Union[np.ndarray, Tuple[float, float, float]],
                                         mode: SamplingOutputMode, sample_rate: float) -> None:

@@ -106,6 +106,12 @@ class MicrowaveDummy(MicrowaveInterface):
         """
         with self._thread_lock:
             return self._cw_power
+    @cw_power.setter
+    def cw_power(self, power):
+        if self.is_scanning:
+            raise RuntimeError('Unable to set CW power. A frequency scan is currently active.')
+        with self._thread_lock:
+            self._cw_power = power
 
     @property
     def cw_frequency(self):
@@ -115,6 +121,12 @@ class MicrowaveDummy(MicrowaveInterface):
         """
         with self._thread_lock:
             return self._cw_frequency
+    @cw_frequency.setter
+    def cw_frequency(self, frequency):
+        if self.is_scanning:
+            raise RuntimeError('Unable to set CW frequency. A frequency scan is currently active.')
+        with self._thread_lock:
+            self._cw_frequency = frequency
 
     @property
     def scan_power(self):
@@ -172,7 +184,7 @@ class MicrowaveDummy(MicrowaveInterface):
             self._is_scanning = False
             self.module_state.unlock()
 
-    def set_cw(self, frequency, power):
+    def set_cw(self, frequency=None, power=None):
         """Configure the CW microwave output. Does not start physical signal output, see also
         "cw_on".
 
@@ -188,9 +200,13 @@ class MicrowaveDummy(MicrowaveInterface):
             self._assert_cw_parameters_args(frequency, power)
 
             # Set power and frequency
-            self.log.debug(f'Setting CW power to {power} dBm and frequency to {frequency:.9e} Hz')
-            self._cw_power = power
-            self._cw_frequency = frequency
+            if power is not None:
+                self._cw_power = power
+                self.log.debug(f'Setting CW power to {power} dBm')
+            if frequency is not None:
+                self._cw_frequency = frequency
+                self.log.debug(f'Setting CW frequency to {frequency:.9e} Hz')
+            
 
     def cw_on(self):
         """ Switches on cw microwave output.
@@ -210,6 +226,9 @@ class MicrowaveDummy(MicrowaveInterface):
                 )
             else:
                 self.log.debug('CW microwave output already running')
+    
+    def cw_off(self):
+        self.off()
 
     def configure_scan(self, power, frequencies, mode, sample_rate):
         """

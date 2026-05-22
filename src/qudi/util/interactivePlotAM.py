@@ -480,9 +480,16 @@ class InteractivePlot(pg.PlotWidget):
     def _update_readout(self):
         if not self._snap_line.has_data:
             return
-        x, y = ScaledFloat(self._snap_line.current_x()), ScaledFloat(self._snap_line.current_y())
-        x = '{:.3r}'.format(x)
-        y = '{:.3r}'.format(y)
+        x_raw = self._snap_line.current_x()
+        y_raw = self._snap_line.current_y()
+        if np.isfinite(x_raw):
+            x = '{:.3r}'.format(ScaledFloat(x_raw))
+        else:
+            x = 'nan'
+        if np.isfinite(y_raw):
+            y = '{:.3r}'.format(ScaledFloat(y_raw))
+        else:
+            y = 'nan'
         self._status_item.setText(
             f"<span style='color:#9ab; font-family:monospace; font-size:11px'>"
             f"  x: {x}    y: {y}</span>"

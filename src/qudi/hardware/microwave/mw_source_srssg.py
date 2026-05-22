@@ -151,6 +151,12 @@ class MicrowaveSRSSG(MicrowaveInterface):
         """
         with self._thread_lock:
             return float(self._device.query('AMPR?'))
+    @cw_power.setter
+    def cw_power(self, power):
+        if self.is_scanning:
+            raise RuntimeError('Unable to set CW power. A frequency scan is currently active.')
+        with self._thread_lock:
+            self._write(f'AMPR {power:f}')
 
     @property
     def cw_frequency(self):
@@ -160,6 +166,12 @@ class MicrowaveSRSSG(MicrowaveInterface):
         """
         with self._thread_lock:
             return float(self._device.query('FREQ?'))
+    @cw_frequency.setter
+    def cw_frequency(self, frequency):
+        if self.is_scanning:
+            raise RuntimeError('Unable to set CW frequency. A frequency scan is currently active.')
+        with self._thread_lock:
+            self._write(f'FREQ {frequency:e}')
 
     @property
     def scan_power(self):
@@ -202,7 +214,7 @@ class MicrowaveSRSSG(MicrowaveInterface):
         with self._thread_lock:
             return self._scan_sample_rate
 
-    def set_cw(self, frequency, power):
+    def set_cw(self, frequency=None, power=None):
         """Configure the CW microwave output. Does not start physical signal output, see also
         "cw_on".
 
@@ -219,8 +231,10 @@ class MicrowaveSRSSG(MicrowaveInterface):
             if self._is_vector_sg:
                 # set the modulation subtype to analog
                 self._write('STYP 0')
-            self._write(f'FREQ {frequency:e}')
-            self._write(f'AMPR {power:f}')
+            if frequency is not None:
+                self._write(f'FREQ {frequency:e}')
+            if power is not None:
+                self._write(f'AMPR {power:f}')
 
     def configure_scan(self, power, frequencies, mode, sample_rate):
         """
@@ -242,11 +256,10 @@ class MicrowaveSRSSG(MicrowaveInterface):
         Must return AFTER the device has actually stopped.
         """
         with self._thread_lock:
-            if self.module_state() != 'idle':
-                self._write('ENBR 0')
-                while self._output_active():
-                    time.sleep(0.1)
-                self.module_state.unlock()
+            self._write('ENBR 0')
+            while self._output_active():
+                time.sleep(0.1)
+            self.module_state.unlock()
 
     def cw_on(self):
         """ Switches on cw microwave output.
@@ -264,6 +277,9 @@ class MicrowaveSRSSG(MicrowaveInterface):
             self._in_cw_mode = True
             self._rf_on()
             self.module_state.lock()
+    
+    def cw_off(self):
+        self.off()
 
     def start_scan(self):
         """Switches on the microwave scanning.
