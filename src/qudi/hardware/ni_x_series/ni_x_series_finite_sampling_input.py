@@ -397,26 +397,27 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.log.error('Unable to read data. Device is not running and no data in buffer.')
             return data
 
-        number_of_samples = self.samples_in_buffer if number_of_samples is None else number_of_samples
+        number_of_samples = self.samples_in_buffer if number_of_samples is None else number_of_samples+1  # +1 since first sample is always 0
 
-        if number_of_samples > self._frame_size:
+        if number_of_samples > self._frame_size+1:  
             raise ValueError(
                 f'Number of requested samples ({number_of_samples}) exceeds number of samples '
                 f'pending for acquisition ({self._frame_size}).'
             )
 
-        if number_of_samples is not None and self.module_state() == 'locked':
-            request_time = time.time()
-            while number_of_samples > self.samples_in_buffer:  # TODO: Check whether this works with a real HW
-                # TODO could one use the ni timeout of the reader class here?
-                if time.time() - request_time < 1.1 * self._frame_size / self._sample_rate:  # TODO Is this timeout ok?
-                    time.sleep(0.05)
-                else:
-                    self.terminate_all_tasks()
-                    self.module_state.unlock()
-                    raise TimeoutError(f'Acquiring {number_of_samples} samples took longer than the whole frame.')
+        # if number_of_samples is not None and self.module_state() == 'locked':
+        # Removed since read_many_sample is already blocking until requested samples are returned.
+            # request_time = time.time()
+            # while number_of_samples > self.samples_in_buffer:  # TODO: Check whether this works with a real HW
+            #     # TODO could one use the ni timeout of the reader class here?
+            #     if time.time() - request_time < 1.1 * self._frame_size / self._sample_rate:  # TODO Is this timeout ok?
+            #         time.sleep(0.05)
+            #     else:
+            #         self.terminate_all_tasks()
+            #         self.module_state.unlock()
+            #         raise TimeoutError(f'Acquiring {number_of_samples} samples took longer than the whole frame.')
         try:
-            # TODO: What if counter stops while waiting for samples?
+            # TODO: What if counter stops while waiting for samples? This should only happen after a partial retrieve of samples.
 
             # Read digital channels
             for i, reader in enumerate(self._di_readers):
@@ -426,11 +427,11 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                     data_buffer,
                     number_of_samples_per_channel=number_of_samples,
                     timeout=self._rw_timeout)
-                if read_samples != number_of_samples:
-                    return data
-                data_buffer *= self._sample_rate
-                # TODO Multiplication by self._sample_rate to convert to c/s, from counts/clock cycle
-                #  What if unit not c/s?
+                # if read_samples != number_of_samples: # Is this a silent error?
+                #     return data
+                data_buffer = data_buffer[1:] # Remove first sample since it is always 0
+                data_buffer *= self._sample_rate  # Convert to counts per second
+                # TODO Option to return absolute counts instead of cps?
                 data[reader._task.name.split('_')[-1]] = data_buffer
 
             # Read analog channels
@@ -472,7 +473,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 self.set_frame_size(frame_size)
 
             self.start_buffered_acquisition()
-            data = self.get_buffered_samples(self._frame_size)
+            data = self.get_buffered_samples(self.frame_size)
             self.stop_buffered_acquisition()
 
             if buffered_frame_size is not None:
@@ -509,8 +510,8 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                     freq=self._sample_rate,
                     idle_state=ni.constants.Level.HIGH if self._trigger_edge==ni.constants.Edge.FALLING else ni.constants.Level.LOW)
                 task.timing.cfg_implicit_timing(
-                    sample_mode=ni.constants.AcquisitionType.FINITE,
-                    samps_per_chan=self._frame_size + 1)
+                    sample_mode=ni.constants.AcquisitionType.CONTINUOUS,)  #Sample clock can just start and stop, this removes N+1 buffer warning
+                    #samps_per_chan=self._frame_size + 1)
             except ni.DaqError:
                 self.log.exception('Error while configuring sample clock task.')
                 try:
@@ -590,39 +591,59 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                     return -1
 
                 try:
-                    task.ci_channels.add_ci_period_chan(
-                        ctr_name,
-                        min_val=0,
-                        max_val=100000000,
-                        units=ni.constants.TimeUnits.TICKS,
-                        edge=self._trigger_edge)
-                    # NOTE: The following two direct calls to C-function wrappers are a
-                    # workaround due to a bug in some NIDAQmx.lib property getters. If one of
-                    # these getters is called, it will mess up the task timing.
-                    # This behaviour has been confirmed using pure C code.
-                    # nidaqmx will call these getters and so the C function is called directly.
-                    try:
-                        lib_importer.windll.DAQmxSetCIPeriodTerm(
-                            task._handle,
-                            ctypes.c_char_p(ctr_name.encode('ascii')),
-                            ctypes.c_char_p(clock_channel.encode('ascii')))
-                        lib_importer.windll.DAQmxSetCICtrTimebaseSrc(
-                            task._handle,
-                            ctypes.c_char_p(ctr_name.encode('ascii')),
-                            ctypes.c_char_p(chnl_name.encode('ascii')))
-                    except:
-                        lib_importer.cdll.DAQmxSetCIPeriodTerm(
-                            task._handle,
-                            ctypes.c_char_p(ctr_name.encode('ascii')),
-                            ctypes.c_char_p(clock_channel.encode('ascii')))
-                        lib_importer.cdll.DAQmxSetCICtrTimebaseSrc(
-                            task._handle,
-                            ctypes.c_char_p(ctr_name.encode('ascii')),
-                            ctypes.c_char_p(chnl_name.encode('ascii')))
+                    if False:
+                        task.ci_channels.add_ci_period_chan(
+                            ctr_name,
+                            min_val=0,
+                            max_val=100000000,
+                            units=ni.constants.TimeUnits.TICKS,
+                            edge=self._trigger_edge)
+                        # NOTE: The following two direct calls to C-function wrappers are a
+                        # workaround due to a bug in some NIDAQmx.lib property getters. If one of
+                        # these getters is called, it will mess up the task timing.
+                        # This behaviour has been confirmed using pure C code.
+                        # nidaqmx will call these getters and so the C function is called directly.
+                        try:
+                            lib_importer.windll.DAQmxSetCIPeriodTerm(
+                                task._handle,
+                                ctypes.c_char_p(ctr_name.encode('ascii')),
+                                ctypes.c_char_p(clock_channel.encode('ascii')))
+                            lib_importer.windll.DAQmxSetCICtrTimebaseSrc(
+                                task._handle,
+                                ctypes.c_char_p(ctr_name.encode('ascii')),
+                                ctypes.c_char_p(chnl_name.encode('ascii')))
+                        except:
+                            lib_importer.cdll.DAQmxSetCIPeriodTerm(
+                                task._handle,
+                                ctypes.c_char_p(ctr_name.encode('ascii')),
+                                ctypes.c_char_p(clock_channel.encode('ascii')))
+                            lib_importer.cdll.DAQmxSetCICtrTimebaseSrc(
+                                task._handle,
+                                ctypes.c_char_p(ctr_name.encode('ascii')),
+                                ctypes.c_char_p(chnl_name.encode('ascii')))
 
-                    task.timing.cfg_implicit_timing(
-                        sample_mode=ni.constants.AcquisitionType.FINITE,
-                        samps_per_chan=self._frame_size+1)
+                        task.timing.cfg_implicit_timing(
+                            sample_mode=ni.constants.AcquisitionType.FINITE,
+                            samps_per_chan=self._frame_size+1)
+                    else:
+                        # Use edge counting instead
+                        ci_chan = task.ci_channels.add_ci_count_edges_chan(
+                            ctr_name,
+                            edge=self._trigger_edge)
+
+                        ci_chan.ci_count_edges_term = chnl_name
+                        ci_chan.ci_count_edges_count_reset_enable = True  #Reset each period rather than accumulate using sample clock
+                        ci_chan.ci_count_edges_count_reset_term = clock_channel
+                        ci_chan.ci_count_edges_count_reset_reset_cnt = 0
+                        ci_chan.ci_count_edges_count_reset_active_edge = self._trigger_edge
+
+                        task.timing.cfg_samp_clk_timing(
+                            rate=self.sample_rate,
+                            source=clock_channel,
+                            sample_mode=ni.constants.AcquisitionType.FINITE,
+                            samps_per_chan=self._frame_size+1,  # +1 since first sample is always 0
+                        )
+
                 except ni.DaqError:
                     try:
                         task.close()

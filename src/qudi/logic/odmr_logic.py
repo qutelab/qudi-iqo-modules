@@ -543,7 +543,7 @@ class OdmrLogic(LogicBase):
 
                 # Set up data acquisition device
                 sampler.set_sample_rate(sample_rate)
-                sampler.set_frame_size(2)  # Minimum two values at a time (NIDAQ requirement)
+                sampler.set_frame_size(1)
                 # Set up microwave scan and start it
                 microwave.configure_scan(self._scan_power, frequencies, mode, sample_rate)
                 microwave.start_scan()  #Enables output, but scan steps are performed manually in _scan_line_manual method called by _scan_odmr_line
@@ -623,11 +623,11 @@ class OdmrLogic(LogicBase):
         for ii in range(self.samples):
             if self.module_state() != 'locked':
                 return new_line  #Return line as is if measurement interrupted
-            dataI = scanner.acquire_frame()  #Acquire 2 data points per channel (minimum, keep 2nd)
+            dataI = scanner.acquire_frame()
             if new_line is None:
                 new_line = {ch: np.full(self.samples, np.nan) for ch in dataI} #Pre-allocate array
             for ch in new_line:
-                new_line[ch][ii] = dataI[ch][-1]  #Add acquired data point to new_line array, always gets 2 data points, and stores the 2nd.
+                new_line[ch][ii] = dataI[ch][-1]
                 if self._debug_frequency and (microwave._meta['name'] == 'microwave_dummy'):
                     new_line[ch][ii] += microwave._frequency/1e8 + ii/10
 

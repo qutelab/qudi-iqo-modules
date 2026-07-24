@@ -464,7 +464,7 @@ class SimpleScanLogic(LogicBase):
             device = self.device_dict[self._device_select]
 
             scanner.set_sample_rate(1/self._time_per)
-            scanner.set_frame_size(1)  # Minimum two values at a time (NIDAQ requirement)
+            scanner.set_frame_size(1)
 
             self._x_data = np.linspace(*self.x_range)
 
