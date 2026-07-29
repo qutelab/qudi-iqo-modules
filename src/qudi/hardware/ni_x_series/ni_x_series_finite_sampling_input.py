@@ -32,6 +32,8 @@ from qudi.util.mutex import RecursiveMutex
 from qudi.core.configoption import ConfigOption
 from qudi.util.helpers import natural_sort
 from qudi.interface.finite_sampling_input_interface import FiniteSamplingInputInterface, FiniteSamplingInputConstraints
+from time import time
+
 
 
 class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
@@ -50,16 +52,19 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
         options:
             device_name: 'Dev1'
             digital_channel_units:  # optional
-                'PFI15': 'c/s'
+                'PFI8': 'c/s'
             analog_channel_units:  # optional
                 'ai0': 'V'
                 'ai1': 'V'
-            # external_sample_clock_source: 'PFI0'  # optional
-            # external_sample_clock_frequency: 1000  # optional
             adc_voltage_range: [-10, 10]  # optional, default [-10, 10]
             max_channel_samples_buffer: 10000000  # optional, default 10000000
             read_write_timeout: 10  # optional, default 10
-            sample_clock_output: '/Dev1/PFI20'  # optional
+            ## Below for using external sample clock. It's assumed each has the same frequency, but can be different clocks for specific timing.
+            ## External clock frequency, used only for calculating sample rate, can be adjusted in software as well.
+            # external_sample_clock_source:   # optional, For each source, source : clock terminal. Any unpaired source will use first clock.
+            #   'PFI8': 'PFI0'  
+            # external_sample_clock_frequency: 1 # optional, for calculating rate. (If not provided, counts will be per cycle, not per second)
+            # sample_clock_output: '/Dev1/PFI12'  # optional, wire internal sample clock to terminal
             trigger_edge: RISING  # optional
 
     """
@@ -69,9 +74,9 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
     _digital_channel_units = ConfigOption(name='digital_channel_units', default=dict(), missing='info')
     _analog_channel_units = ConfigOption(name='analog_channel_units', default=dict(), missing='info')
     _external_sample_clock_source = ConfigOption(
-        name='external_sample_clock_source', default=None, missing='nothing')
+        name='external_sample_clock_source', default=dict(), missing='nothing')
     _external_sample_clock_frequency = ConfigOption(
-        name='external_sample_clock_frequency', default=None, missing='nothing')
+        name='external_sample_clock_frequency', default=1, missing='nothing')
 
     _physical_sample_clock_output = ConfigOption(name='sample_clock_output', default=None)
     _trigger_edge = ConfigOption(name='trigger_edge', default="RISING",
@@ -116,6 +121,12 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
         self._frame_size = -1
         self._constraints = None
 
+        if self._external_sample_clock_source is not None:
+            self._use_external_clock=True
+        else:
+            self._use_external_clock=False
+
+
     def on_activate(self):
         """
         Starts up the NI-card and performs sanity checks.
@@ -127,6 +138,13 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
         self._analog_channel_units = dict() if not self._analog_channel_units else self._analog_channel_units
         self._analog_channel_units = {self._extract_terminal(key): value
                                       for key, value in self._analog_channel_units.items()}
+
+        #TODO Add error checking below for external clock source.
+        if type(self._external_sample_clock_source) is str:
+            self._external_sample_clock_source = {'':self._external_sample_clock_source}
+        self._external_sample_clock_source = dict() if not self._external_sample_clock_source else self._external_sample_clock_source
+        self._external_sample_clock_source = {self._extract_terminal(key): self._extract_terminal(value)
+                                             for key, value in self._external_sample_clock_source.items()}
 
         # Check if device is connected and set device to use
         dev_names = ni.system.System().devices.device_names
@@ -174,10 +192,17 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                                          ', '.join(self.__all_analog_terminals)))
             analog_sources = set(natural_sort(source_set.difference(invalid_sources)))
 
+        # Check if we need an internal clock
+        self._use_internal_clock = not bool(self._external_sample_clock_source)
+
         # Check if all input channels fit in the device
-        if len(digital_sources) > 3:
+        if self._use_internal_clock:
+            max_digital = 3
+        else:
+            max_digital = 4
+        if len(digital_sources) > max_digital:
             raise ValueError(
-                'Too many digital channels specified. Maximum number of digital channels is 3.'
+                'Too many digital channels specified. Maximum number of digital channels is 3 (or 4 without internal clock).'
             )
         if len(analog_sources) > 16:
             raise ValueError(
@@ -215,6 +240,8 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
         self._sample_rate = self._constraints.max_sample_rate
         # TODO: Get real sample rate limits depending on specified channels (see NI FSIO), or include in "ni helper".
         self._frame_size = 0
+
+
 
         self.set_active_channels(digital_sources.union(analog_sources))
 
@@ -352,12 +379,13 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 self.module_state.unlock()
                 raise
 
-        try:
-            self._clk_task_handle.start()
-        except ni.DaqError:
-            self.terminate_all_tasks()
-            self.module_state.unlock()
-            raise
+        if not self._use_external_clock:
+            try:
+                self._clk_task_handle.start()
+            except ni.DaqError:
+                self.terminate_all_tasks()
+                self.module_state.unlock()
+                raise
 
     def stop_buffered_acquisition(self):
         """ Will abort the currently running data frame acquisition.
@@ -370,7 +398,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.terminate_all_tasks()
             self.module_state.unlock()
 
-    def get_buffered_samples(self, number_of_samples=None):
+    def get_buffered_samples(self, number_of_samples=None,debug_time=False):
         """ Returns a chunk of the current data frame for all active channels read from the frame
         buffer.
         If parameter <number_of_samples> is omitted, this method will return the currently
@@ -423,10 +451,15 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             for i, reader in enumerate(self._di_readers):
                 data_buffer = np.zeros(number_of_samples)
                 # read the counter value. This function is blocking.
+                if debug_time:
+                    t0 = time()
+
                 read_samples = reader.read_many_sample_double(
                     data_buffer,
                     number_of_samples_per_channel=number_of_samples,
                     timeout=self._rw_timeout)
+                if debug_time:
+                    print('Acq time taken',(time()-t0)*1e3,'ms')
                 # if read_samples != number_of_samples: # Is this a silent error?
                 #     return data
                 data_buffer = data_buffer[1:] # Remove first sample since it is always 0
@@ -493,62 +526,80 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                            'before you close the previous one.')
             return -1
 
-        # Try to find an available counter
-        for src in self.__all_counters:
-            # Check if task by that name already exists
-            task_name = 'SampleClock_{0:d}'.format(id(self))
-            try:
-                task = ni.Task(task_name)
-            except ni.DaqError:
-                self.log.exception(f'Could not create task with name "{task_name}".')
-                return -1
-
-            # Try to configure the task
-            try:
-                task.co_channels.add_co_pulse_chan_freq(
-                    '/{0}/{1}'.format(self._device_name, src),
-                    freq=self._sample_rate,
-                    idle_state=ni.constants.Level.HIGH if self._trigger_edge==ni.constants.Edge.FALLING else ni.constants.Level.LOW)
-                task.timing.cfg_implicit_timing(
-                    sample_mode=ni.constants.AcquisitionType.CONTINUOUS,)  #Sample clock can just start and stop, this removes N+1 buffer warning
-                    #samps_per_chan=self._frame_size + 1)
-            except ni.DaqError:
-                self.log.exception('Error while configuring sample clock task.')
+        if self._use_internal_clock:
+            # Try to find an available counter
+            for src in self.__all_counters:
+                # Check if task by that name already exists
+                task_name = 'SampleClock_{0:d}'.format(id(self))
                 try:
-                    del task
-                except NameError:
-                    pass
-                return -1
-
-            # Try to reserve resources for the task
-            try:
-                task.control(ni.constants.TaskMode.TASK_RESERVE)
-            except ni.DaqError:
-                # Try to clean up task handle
-                try:
-                    task.close()
+                    task = ni.Task(task_name)
                 except ni.DaqError:
-                    pass
-                try:
-                    del task
-                except NameError:
-                    pass
-
-                # Return if no counter could be reserved
-                if src == self.__all_counters[-1]:
-                    self.log.exception('Error while setting up clock. Probably because no free '
-                                       'counter resource could be reserved.')
+                    self.log.exception(f'Could not create task with name "{task_name}".')
                     return -1
-                continue
-            break
 
-        self._clk_task_handle = task
+                # Try to configure the task
+                try:
+                    self._clock_channel = task.co_channels.add_co_pulse_chan_freq(
+                        '/{0}/{1}'.format(self._device_name, src),
+                        freq=self._sample_rate,
+                        idle_state=ni.constants.Level.HIGH if self._trigger_edge==ni.constants.Edge.FALLING else ni.constants.Level.LOW)
+                    task.timing.cfg_implicit_timing(
+                        sample_mode=ni.constants.AcquisitionType.CONTINUOUS,)  #Sample clock can just start and stop, this removes N+1 buffer warning
+                        #samps_per_chan=self._frame_size + 1)
+                except ni.DaqError:
+                    self.log.exception('Error while configuring sample clock task.')
+                    try:
+                        del task
+                    except NameError:
+                        pass
+                    return -1
 
-        if self._physical_sample_clock_output is not None:
-            clock_channel = '/{0}InternalOutput'.format(self._clk_task_handle.channel_names[0])
-            ni.system.System().connect_terms(source_terminal=clock_channel,
-                                             destination_terminal='/{0}/{1}'.format(
-                                                 self._device_name, self._physical_sample_clock_output))
+                # Try to reserve resources for the task
+                try:
+                    task.control(ni.constants.TaskMode.TASK_RESERVE)
+                except ni.DaqError:
+                    # Try to clean up task handle
+                    try:
+                        task.close()
+                    except ni.DaqError:
+                        pass
+                    try:
+                        del task
+                    except NameError:
+                        pass
+
+                    # Return if no counter could be reserved
+                    if src == self.__all_counters[-1]:
+                        self.log.exception('Error while setting up clock. Probably because no free '
+                                        'counter resource could be reserved.')
+                        return -1
+                    continue
+                break
+
+            self._clk_task_handle = task
+
+            internal_clock_term = '/{0}InternalOutput'.format(self._clk_task_handle.channel_names[0])
+            self._clock_channel_term = {src: internal_clock_term for src in self.active_channels}
+                                                            
+            if self._physical_sample_clock_output is not None:
+                ni.system.System().connect_terms(source_terminal=self._clock_channel_term,
+                                                destination_terminal='/{0}/{1}'.format(
+                                                    self._device_name, self._physical_sample_clock_output))
+
+        else:
+            self._clock_channel_term = {}
+            for src in self.active_channels:
+                default_clock_term = '/{0}/{1}'.format(self._device_name, list(self._external_sample_clock_source.values())[0])
+                if src in self._external_sample_clock_source:
+                    self._clock_channel_term[src] = '/{0}/{1}'.format(self._device_name,self._external_sample_clock_source[src])
+                else:
+                    self._clock_channel_term[src] = default_clock_term
+
+            if self._external_sample_clock_frequency is not None:
+                self._sample_rate = float(self._external_sample_clock_frequency)
+            else:
+                self._sample_rate = 1
+
         return 0
 
     def _init_digital_tasks(self):
@@ -573,7 +624,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.terminate_all_tasks()
             return -1
 
-        clock_channel = '/{0}InternalOutput'.format(self._clk_task_handle.channel_names[0])
+        
         # sample_freq = float(self._clk_task_handle.co_channels.all.co_pulse_freq)
 
         # Set up digital counting tasks
@@ -607,7 +658,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                             lib_importer.windll.DAQmxSetCIPeriodTerm(
                                 task._handle,
                                 ctypes.c_char_p(ctr_name.encode('ascii')),
-                                ctypes.c_char_p(clock_channel.encode('ascii')))
+                                ctypes.c_char_p(self._clock_channel_term.encode('ascii')))
                             lib_importer.windll.DAQmxSetCICtrTimebaseSrc(
                                 task._handle,
                                 ctypes.c_char_p(ctr_name.encode('ascii')),
@@ -633,13 +684,13 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
 
                         ci_chan.ci_count_edges_term = chnl_name
                         ci_chan.ci_count_edges_count_reset_enable = True  #Reset each period rather than accumulate using sample clock
-                        ci_chan.ci_count_edges_count_reset_term = clock_channel
+                        ci_chan.ci_count_edges_count_reset_term = self._clock_channel_term[chnl]
                         ci_chan.ci_count_edges_count_reset_reset_cnt = 0
                         ci_chan.ci_count_edges_count_reset_active_edge = self._trigger_edge
 
                         task.timing.cfg_samp_clk_timing(
                             rate=self.sample_rate,
-                            source=clock_channel,
+                            source=self._clock_channel_term[chnl],
                             sample_mode=ni.constants.AcquisitionType.FINITE,
                             samps_per_chan=self._frame_size+1,  # +1 since first sample is always 0
                         )
@@ -718,8 +769,6 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.terminate_all_tasks()
             return -1
 
-        clock_channel = '/{0}InternalOutput'.format(self._clk_task_handle.channel_names[0])
-        sample_freq = float(self._clk_task_handle.co_channels.all.co_pulse_freq)
 
         # Set up analog input task
         task_name = 'AnalogIn_{0:d}'.format(id(self))
@@ -735,8 +784,8 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             ai_task.ai_channels.add_ai_voltage_chan(ai_ch_str,
                                                     max_val=max(self._adc_voltage_range),
                                                     min_val=min(self._adc_voltage_range))
-            ai_task.timing.cfg_samp_clk_timing(sample_freq,
-                                               source=clock_channel,
+            ai_task.timing.cfg_samp_clk_timing(self.sample_rate,
+                                               source=self._clock_channel_term,
                                                active_edge=self._trigger_edge,
                                                sample_mode=ni.constants.AcquisitionType.FINITE,
                                                samps_per_chan=self._frame_size)

@@ -48,14 +48,11 @@ class SpectrometerLogic(LogicBase):
     """
 
     # declare connectors
-    spectrometer = Connector(interface='SpectrometerInterface')
-    #camera = Connector(interface='CameraInterface')
+    spectrometer = Connector(interface='SpectrometerInterface')  #Spectrometer also controls camera
     modulation_device = Connector(interface='ModulationInterface', optional=True)
 
     # declare status variables
-    #_spectrum = StatusVar(name='spectrum', default=[None, None])
-    #_background = StatusVar(name='background', default=None)
-    #_wavelength = StatusVar(name='wavelength', default=None)
+
     _background_correction = StatusVar(name='background_correction', default=False)
     _number_spectra = StatusVar(name='_number_spectra', default=1)
     _number_background = StatusVar(name='_number_background', default=1)
@@ -243,9 +240,20 @@ class SpectrometerLogic(LogicBase):
             for dI in data.T:
                 cut = np.full(len(dI),True)
                 for ii in range(3):
-                    mean = np.mean(dI[cut])
-                    std = np.std(dI[cut])
-                    cut = np.abs(dI-mean)<5*std
+                    diCut = dI[cut]
+                    if len(diCut)>=5:
+                        # Remove extreme points from mean/std calculation
+                        if len(diCut)<20: 
+                            diCut = np.sort(diCut)[1:-1]
+                        else:
+                            i10 = int(len(diCut)*0.1)
+                            i90 = int(len(diCut)*0.9)
+                            diCut = np.sort(diCut)[i10:i90]
+                    mean = np.mean(diCut)
+                    std = np.std(diCut)
+                    #if std==0:
+                    #    break
+                    cut = np.abs(dI-mean)<5*std+1e-15  #Add small offset in case std = 0
                 dataMean.append(np.mean(dI[cut]))
             data = np.array(dataMean)
 
@@ -289,9 +297,20 @@ class SpectrometerLogic(LogicBase):
             for dI in data.T:
                 cut = np.full(len(dI),True)
                 for ii in range(3):
-                    mean = np.mean(dI[cut])
-                    std = np.std(dI[cut])
-                    cut = np.abs(dI-mean)<5*std
+                    diCut = dI[cut]
+                    if len(diCut)>=5:
+                        # Remove extreme points from mean/std calculation
+                        if len(diCut)<20: 
+                            diCut = np.sort(diCut)[1:-1]
+                        else:
+                            i10 = int(len(diCut)*0.1)
+                            i90 = int(len(diCut)*0.9)
+                            diCut = np.sort(diCut)[i10:i90]
+                    mean = np.mean(diCut)
+                    std = np.std(diCut)
+                    #if std==0:
+                    #    break
+                    cut = np.abs(dI-mean)<5*std+1e-15  #Add small offset in case std = 0
                 dataMean.append(np.mean(dI[cut]))
             data = np.array(dataMean)
         
