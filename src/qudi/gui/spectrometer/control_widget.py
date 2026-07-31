@@ -44,11 +44,11 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         self.acquire_button.setToolTip('Acquire a new spectrum.')
         main_layout.addWidget(self.acquire_button, 0, 0)
 
-        self.spectrum_continue_button = QtWidgets.QPushButton('Continue Spectrum')
-        self.spectrum_continue_button.setToolTip(
-            'If continuous spectrum is activated, continue averaging.'
+        self.spectrum_live_button = QtWidgets.QPushButton('Live Spectrum')
+        self.spectrum_live_button.setToolTip(
+            'Collect continuously, last N scans stored and averaged'
         )
-        main_layout.addWidget(self.spectrum_continue_button, 0, 1)
+        main_layout.addWidget(self.spectrum_live_button, 0, 1)
 
         self.save_spectrum_button = QtWidgets.QToolButton()
         self.save_spectrum_button.setToolButtonStyle(
@@ -88,9 +88,10 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         number_spectra_label = QtWidgets.QLabel('Number of Spectra:')
         number_spectra_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.number_spectra_input = QtWidgets.QSpinBox()
-        self.number_spectra_input.setMinimum(-1)
+        self.number_spectra_input.setMinimum(0)
+        self.number_spectra_input.setMaximum(999999)
         self.number_spectra_input.setValue(1)
-        self.number_spectra_input.setToolTip('Number of spectra to acquire and average. Set to -1 for infinite acquisition')
+        self.number_spectra_input.setToolTip('Number of spectra to acquire and average.')
         switch_layout.addWidget(number_spectra_label, switchII, 0)
         switch_layout.addWidget(self.number_spectra_input, switchII, 1)
         
@@ -98,9 +99,10 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         number_background_label = QtWidgets.QLabel('Number of Background:')
         number_background_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.number_background_input = QtWidgets.QSpinBox()
-        self.number_background_input.setMinimum(-1)
+        self.number_background_input.setMinimum(0)
+        self.number_spectra_input.setMaximum(999999)
         self.number_background_input.setValue(1)
-        self.number_background_input.setToolTip('Number of background spectra to acquire and average. Set to -1 for infinite acquisition')
+        self.number_background_input.setToolTip('Number of background spectra to acquire and average.')
         switch_layout.addWidget(number_background_label, switchII, 0)
         switch_layout.addWidget(self.number_background_input, switchII, 1)
 

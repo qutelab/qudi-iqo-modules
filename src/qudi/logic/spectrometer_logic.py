@@ -63,7 +63,7 @@ class SpectrometerLogic(LogicBase):
     _fit_config = StatusVar(name='fit_config', default=dict())
 
     # Internal signals
-    _sig_get_spectrum = QtCore.Signal(object, object, bool)  #Need object to pass None.
+    _sig_get_spectrum = QtCore.Signal(object, object, object, bool)  #Need object to pass None.
     _sig_get_background = QtCore.Signal(object, bool)
 
     # External signals eg for GUI module
@@ -96,6 +96,7 @@ class SpectrometerLogic(LogicBase):
         self._acquisition_running = False
         self._fit_results = None
         self._fit_method = ''
+        self._live = False
 
     def on_activate(self):
         """ Initialisation performed during activation of the module.
@@ -120,17 +121,27 @@ class SpectrometerLogic(LogicBase):
     def stop(self):
         self._stop_acquisition = True
 
-    def run_get_spectrum(self, number_spectra=None, differential_spectrum=None, reset=True):  #Call this to queue the acquisition
+    def run_get_spectrum(self, number_spectra=None, differential_spectrum=None, live=None, reset=True):  #Call this to queue the acquisition
         if reset:
             self._stop_acquisition = False    
-        self._sig_get_spectrum.emit(number_spectra, differential_spectrum, reset)
+        self._sig_get_spectrum.emit(number_spectra, differential_spectrum, live, reset)
 
-    def get_spectrum(self, number_spectra=None, differential_spectrum=None, reset=True):  #Call this to directly acquire the spectrum
+    def get_spectrum(self, number_spectra=None, differential_spectrum=None, live=None, reset=True):  
+        '''
+        Call this to directly acquire the spectrum
+        number_spectra: number to record, if not provided, uses currently set value.
+        differential_spectrum: Enable to use modulation for differential, if not provided, uses currently set value.
+        reset: Resets the data first
+        live: continuously records, and saves only latest number_spectra values.
+        '''
         if number_spectra is not None:
             if number_spectra > 0:  #sig_get_background emits only ints, so 0 is passed instead of None.
                 self.number_spectra = int(number_spectra)
         if differential_spectrum is not None:
             self.differential_spectrum = bool(differential_spectrum)
+
+        if live is not None:
+            self._live = bool(live)
         
         if reset:
             self._spectrum = [None, None]  # Main spectrum, differential spectrum
@@ -151,7 +162,11 @@ class SpectrometerLogic(LogicBase):
         with self._lock:
             if self._spectrum[0] is None:
                 self._spectrum[0] = np.full((self.number_spectra,data.shape[-1]), np.nan) #Pre-populate array
-            self._spectrum[0][self._repetitions_spectrum] = data[1, :]
+            if (self._repetitions_spectrum < self.number_spectra):
+                self._spectrum[0][self._repetitions_spectrum] = data[1, :]
+            else:
+                self._spectrum[0][:-1]=self._spectrum[0][1:]  # Manual rolling of data to maintain order, hopefully not to slow.
+                self._spectrum[0][-1] = data[1, :]
             
             self._wavelength = data[0, :]
             self._repetitions_spectrum += 1
@@ -162,14 +177,18 @@ class SpectrometerLogic(LogicBase):
             with self._lock:
                 if self._spectrum[1] is None:
                     self._spectrum[1] = np.full((self.number_spectra,data.shape[-1]), np.nan) #Pre-populate array
-                self._spectrum[1][self._repetitions_spectrum] = data[1, :]
+                if (self._repetitions_spectrum < self.number_spectra):
+                    self._spectrum[1][self._repetitions_spectrum] = data[1, :]
+                else:
+                    self._spectrum[1][:-1]=self._spectrum[1][1:]  # Manual rolling of data to maintain order, hopefully not to slow.
+                    self._spectrum[1][-1] = data[1, :]
                 
         else:
             with self._lock:
                 self._spectrum[1] = None
         self.sig_data_updated.emit()
         
-        if ((self._repetitions_spectrum < self.number_spectra) or (self.number_spectra == -1)) and not self._stop_acquisition:
+        if ((self._repetitions_spectrum < self.number_spectra) or (self._live)) and not self._stop_acquisition:
             self.run_get_spectrum(reset=False)
         else:
             self._acquisition_running = False

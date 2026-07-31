@@ -397,11 +397,10 @@ class SimpleScanGui(GuiBase):
     def _on_scan_complete(self, success):
         """Called when the full scan finishes; re-enable GUI controls."""
         self._update_scan_data()
-        self._update_scan_state(False)   # logic never emits sigScanStateUpdated on natural completion
         if success:
             self.log.info('Simple scan completed successfully.')
         else:
-            self.log.warning('Simple scan did not complete successfully.')
+            self.log.info('Simple scan did not complete successfully.')
 
     # ── Parameter change slots (GUI → logic) ──────────────────────────────────
 
@@ -412,12 +411,7 @@ class SimpleScanGui(GuiBase):
         if device is None:
             return
 
-        # Build simplified {label: (value, unit)} dict for the dockwidget
-        params = {}
-        if device._static_set_parameters:
-            for label, entry in device._static_set_parameters.items():
-                params[label] = (entry[1], entry[2])
-        self._mw.control_dockwidget.set_static_set_parameters(params)
+        self._mw.control_dockwidget.set_static_set_parameters(device._static_set_parameters)
 
         # Update x-range label from the device's first data label/unit
         if device._data_labels:
@@ -446,7 +440,7 @@ class SimpleScanGui(GuiBase):
             return
         if label in device._static_set_parameters:
             old = device._static_set_parameters[label]
-            device._static_set_parameters[label] = (old[0], value, old[2])
+            device._static_set_parameters[label] = (old[0], value, *old[2:])
 
     @QtCore.Slot(float, float, int)
     def _x_range_changed(self, start, end, steps):

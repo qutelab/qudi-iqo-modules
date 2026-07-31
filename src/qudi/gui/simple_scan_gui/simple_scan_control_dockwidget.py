@@ -68,7 +68,7 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         main_widget.setLayout(form)
         self.setWidget(main_widget)
         self._form = form
-        self._static_param_spinboxes = {}  # label -> ScienDSpinBox
+        self._static_param_widgets = {}  # label -> widget
 
         # ── Device selector ───────────────────────────────────────────────────
         self.device_combo = QtWidgets.QComboBox()
@@ -161,9 +161,9 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
 
     # ── Internal slots ────────────────────────────────────────────────────────
 
-    @QtCore.Slot()
-    def _emit_static_param(self, label, spinbox):
-        self.sigStaticSetParamChanged.emit(label, spinbox.value())
+    #@QtCore.Slot()
+    #def _emit_static_param(self, label, spinbox):
+    #    self.sigStaticSetParamChanged.emit(label, spinbox.value())
 
     @QtCore.Slot()
     def _emit_x_range(self):
@@ -205,31 +205,53 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
 
         Parameters
         ----------
-        params : dict
-            ``{label: (value, unit)}`` extracted from
+        params : dict from device
+            ``{label: (function, value, unit, (constraints))}`` extracted from
             ``ScanDevice._static_set_parameters``.
         """
         # Remove previously added dynamic rows
-        for spinbox in list(self._static_param_spinboxes.values()):
-            self._form.removeRow(spinbox)
-        self._static_param_spinboxes.clear()
+        for widget in list(self._static_param_widgets.values()):
+            self._form.removeRow(widget)
+        self._static_param_widgets.clear()
 
         if not params:
             return
 
-        for label, (value, unit) in params.items():
-            spinbox = ScienDSpinBox()
-            spinbox.setDecimals(6)
-            spinbox.setRange(-1e15, 1e15)
-            if unit:
-                spinbox.setSuffix(unit)
-            spinbox.setValue(float(value))
+        for label, entry in params.items():
+            print('Populating:',label,entry)
+            if len(entry)==3:
+                value,unit = entry[1:]
+                constraint=None
+            else:
+                value,unit,constraint=entry[1:]
+            if constraint is None or (type(constraint) == tuple):
+                widget = ScienDSpinBox()
+                widget.setDecimals(6)
+                if constraint:
+                    widget.setRange(constraint[0],constraint[1])
+                else:
+                    widget.setRange(-1e15, 1e15)
+                if unit:
+                    widget.setSuffix(unit)
+                widget.setValue(float(value))
+                widget.editingFinished.connect(
+                    lambda sb=widget, lbl=label: self.sigStaticSetParamChanged.emit(lbl, sb.value())
+                )
+
+            elif type(constraint)==list:
+                widget = QtWidgets.QComboBox()
+                widget.addItems(constraint)
+                widget.setCurrentText(value)
+                widget.currentTextChanged.connect(
+                    lambda text, lbl= label: self.sigStaticSetParamChanged.emit(lbl,text)
+                )
+
+            else:
+                raise RuntimeError(f'Unexpected constraint type: {label} {constraint} : {type(constraint)}')
             # Use default-argument capture to freeze loop variables
-            spinbox.editingFinished.connect(
-                lambda sb=spinbox, lbl=label: self.sigStaticSetParamChanged.emit(lbl, sb.value())
-            )
-            self._static_param_spinboxes[label] = spinbox
-            self._form.addRow(f'{label}:', spinbox)
+            
+            self._static_param_widgets[label] = widget
+            self._form.addRow(f'{label}:', widget)
 
     def set_device_list(self, devices):
         """
@@ -302,5 +324,5 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.time_wait_spinbox.setEnabled(enabled)
         self.number_scans_spinbox.setEnabled(enabled)
         self.shuffle_x_checkbox.setEnabled(enabled)
-        for spinbox in self._static_param_spinboxes.values():
-            spinbox.setEnabled(enabled)
+        for widget in self._static_param_widgets.values():
+            widget.setEnabled(enabled)

@@ -102,7 +102,7 @@ class SpectrometerGui(GuiBase):
         self._spectrometer_logic().sig_fit_updated.connect(self.update_fit)
 
         self._mw.control_widget.acquire_button.clicked.connect(self.acquire_spectrum)
-        self._mw.control_widget.spectrum_continue_button.clicked.connect(self.continue_spectrum)
+        self._mw.control_widget.spectrum_live_button.clicked.connect(self.live_spectrum)
         self._mw.control_widget.background_button.clicked.connect(self.acquire_background)
         self._mw.action_save_spectrum.triggered.connect(self.save_spectrum)
         self._mw.action_save_background.triggered.connect(self.save_background)
@@ -192,7 +192,7 @@ class SpectrometerGui(GuiBase):
         self._spectrometer_logic().sig_fit_updated.disconnect(self.update_fit)
 
         self._mw.control_widget.acquire_button.clicked.disconnect()
-        self._mw.control_widget.spectrum_continue_button.clicked.disconnect()
+        self._mw.control_widget.spectrum_live_button.clicked.disconnect()
         self._mw.control_widget.background_button.clicked.disconnect()
         self._mw.action_save_spectrum.triggered.disconnect()
         self._mw.action_save_background.triggered.disconnect()
@@ -241,6 +241,7 @@ class SpectrometerGui(GuiBase):
             self._mw.control_widget.background_button.setText('Acquire Background')
             self._mw.control_widget.acquire_button.setEnabled(True)
             self._mw.control_widget.background_button.setEnabled(True)
+            self._mw.control_widget.spectrum_live_button.setEnabled(True)
 
         # update settings shown by the gui
         self._mw.control_widget.background_correction_switch.blockSignals(True)
@@ -259,9 +260,7 @@ class SpectrometerGui(GuiBase):
         self._mw.control_widget.number_background_input.setValue(
             self._spectrometer_logic().number_background
         )
-        self._mw.control_widget.spectrum_continue_button.setEnabled(
-            (self._spectrometer_logic()._repetitions_spectrum < self._spectrometer_logic().number_spectra) or (self._spectrometer_logic().number_spectra == -1)
-        )
+
         self.get_settings()  #Updates spectrometer settings.
 
         self._mw.data_widget.fit_region.setRegion(self._spectrometer_logic().fit_region)
@@ -337,20 +336,22 @@ class SpectrometerGui(GuiBase):
             self._spectrometer_logic().differential_spectrum = self._mw.control_widget.differential_spectrum_switch.isChecked()
             self._mw.control_widget.acquire_button.setText('Stop Spectrum')
             self._mw.control_widget.background_button.setEnabled(False)
+            self._mw.control_widget.spectrum_live_button.setEnabled(False)
             self._spectrometer_logic().run_get_spectrum()
         else:
             self._spectrometer_logic().stop()
             self._mw.control_widget.acquire_button.setText('Acquire Spectrum')
             
 
-    def continue_spectrum(self):
+    def live_spectrum(self):
         if not self._spectrometer_logic().acquisition_running:
             self._spectrometer_logic().background_correction = self._mw.control_widget.background_correction_switch.isChecked()
             self._spectrometer_logic().number_spectra = self._mw.control_widget.number_spectra_input.value()
             self._spectrometer_logic().differential_spectrum = self._mw.control_widget.differential_spectrum_switch.isChecked()
             self._mw.control_widget.acquire_button.setText('Stop Spectrum')
             self._mw.control_widget.background_button.setEnabled(False)
-            self._spectrometer_logic().run_get_spectrum(reset=False)
+            self._mw.control_widget.spectrum_live_button.setEnabled(False)
+            self._spectrometer_logic().run_get_spectrum(live=True)
 
     def acquire_background(self):
         if not self._spectrometer_logic().acquisition_running:

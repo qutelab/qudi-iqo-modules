@@ -43,6 +43,8 @@ from qudi.interface.simple_laser_interface import SimpleLaserInterface
 
 from qudi.interface.microwave_interface import MicrowaveInterface
 
+from time import sleep
+
 
 class SimpleScanLogic(LogicBase):
     """
@@ -83,9 +85,9 @@ class SimpleScanLogic(LogicBase):
 
     # Update signals, e.g. for GUI module
     sigScanParametersUpdated = QtCore.Signal(dict)
-    sigScanStateUpdated = QtCore.Signal(bool)
+    sigScanStateUpdated = QtCore.Signal(bool)  #True when running, False when not
     sigScanDataUpdated = QtCore.Signal()
-    sigScanComplete = QtCore.Signal(bool)
+    sigScanComplete = QtCore.Signal(bool)   #True if successful, False if unsucessful
     sigLineReady = QtCore.Signal(bool) #True if successful, False if unsucessful
     sigDataPointReady = QtCore.Signal(bool)  #True if successful, False if unsucessful
     sigFitUpdated = QtCore.Signal(object, str, int)
@@ -115,19 +117,22 @@ class SimpleScanLogic(LogicBase):
     
     class ScanDevice:
         def __init__(self, name:str, x_setter:Callable, y_getter:Callable=None, len_y:int=None, 
-                     data_labels:list[str]=None, data_units:list[str]=None, static_read_parameters:dict=None, static_set_parameters:dict=None,
+                     data_labels:list[str]=None, data_units:list[str]=None, 
+                     static_read_parameters:dict=dict(), static_set_parameters:dict=dict(),
                      start_function:Callable=None, end_function:Callable=None):
             '''
             Build the connection to the scan device:
             name: the name that will be listed/logged
-            x_setter: function that takes in a float and applied it to the device
+            x_setter: function that takes in a float and applies it to the device
             y_getter: Optional, function that retrieves the data point(s) at given x, excluding from main scanner which is handled separately. 
                         Returns once per x_point, but can return multiple values. Values will be joined with scanner value.
             len_y: Semi-optional, number of values that are returned by y_getter. If None, inferred from lenth of data_labels, but if that is None and y_getter is set, then raises error.
             data_labels/data_units: Optional, the headers will be recorded. Should be a list of [x,y,y2,...]. 
                                     Again, scanner value will be handled separately
             static_read_parameters: Optional, dict of Label: (read function, unit) for any parameters that are static across the scan but should be recorded in the data header.
-            static_set_parameters: Optional, dict of Label: (set function, unit) for any parameters that are static across the scan but need to be set at the start of the scan. These will be included in the data header and saved with the data.
+            static_set_parameters: Optional, dict of Label: (set function, default, unit) or (set function, default, unit, constraints) 
+                 for any parameters that are static across the scan but need to be set at the start of the scan. If constraints provided,
+                 use tuple for (min,max), list for specific choices. These will be included in  the data header and saved with the data.
             start_function: Optional, function that will be called at the start of the scan.
             end_function: Optional, function that will be called at the end of the scan.
             '''
@@ -155,7 +160,9 @@ class SimpleScanLogic(LogicBase):
                     data_units = ['']
                 if len(data_labels) != len(data_units):
                     raise ValueError('data_labels and data_units must have the same length.')
+                len_y = 0
 
+            # TODO: More type checking, e.g. for static_set
             self.name = name
             self._x_setter = x_setter
             self._y_getter = y_getter
@@ -186,13 +193,33 @@ class SimpleScanLogic(LogicBase):
                 return y
             else: 
                 return None
+
+        @property
+        def len_y(self):
+            return self._len_y
         
         def start_scan(self, first_value=None, leave_x=False):
             if first_value is None and not leave_x:
                 raise ValueError('first_value must be provided if leave_x is False.')
             
-            if self._static_set_parameters is not None and len(self._static_set_parameters)>0:
-                for label, (set_func, value, unit) in self._static_set_parameters.items():
+            if len(self._static_set_parameters)>0:
+                for label, val in self._static_set_parameters.items():
+                    if len(val)==3:
+                        set_func, value, unit = val
+                        constraint=None
+                    elif len(val)==4:
+                        set_func, value, constraint, unit = val
+                    else:
+                        raise RuntimeError(f'Unexpected length of values for static_set_paramters, must be 3 or 4')
+                    if constraint:
+                        if type(constraint) == tuple:
+                            if value<constraint[0] or value>constraint[1]:
+                                raise ValueError(f'Set parameter {label} to {value} outside range {constraint}')
+                        elif type(constraint) == list:
+                            if value not in constraint:
+                                raise ValueError(f'Set parameter {label} to {value} not in list {constraint}')
+                        else:
+                            raise NotImplementedError(f'Constraint type {type(constraint)} not implemented.')
                     print('Setting static parameter', label, 'to', value, unit)
                     set_func(value)
                     self._metadata[f'{label} ({unit})'] = value
@@ -203,7 +230,7 @@ class SimpleScanLogic(LogicBase):
             if not leave_x:
                 self.set_x(first_value)
 
-            if self._static_read_parameters is not None and len(self._static_read_parameters)>0:
+            if len(self._static_read_parameters)>0:
                 for label, (read_func, unit) in self._static_read_parameters.items():
                     value = read_func()
                     self._metadata[f'{label} ({unit})'] = value
@@ -267,8 +294,8 @@ class SimpleScanLogic(LogicBase):
         #  to retrieve any additional data from the device that is not included in the main scanner data. This
         #  allows for flexibility in what devices can be scanned and what data is recorded, as well as keeping
         #  the main scanner loop separate from device-specific code.
+        # 
         # Required: x_setter, function thats called each line to set the value
-        #   
         # Optional:
         # y_getter: Function that retrieves additonal data point(s) at each x.
         # y_len: If y_getter is used, how many values does it return?
@@ -281,31 +308,76 @@ class SimpleScanLogic(LogicBase):
         #                      read static_read_parameters, scan, then call end_function.
         
         self.laserScanner = self.ScanDevice('Laser',
-                            lambda x: self._laser().set_piezo_voltage(x),
-                            lambda : self._laser().get_wavelength(),
-                            data_labels=['Piezo Voltage','Wavelength'], # x, y1, y2,...
-                            data_units=['V','m'],
-                            static_read_parameters={},
-                            static_set_parameters={'Laser Power': (self._laser().set_power, 1e-6, 'W')},
-                            start_function=None,
-                            end_function=None,
-                            )
+                lambda x: self._laser().set_piezo_voltage(x),
+                lambda : self._laser().get_wavelength(),
+                data_labels=['Piezo Voltage','Wavelength'], # x, y1, y2,...
+                data_units=['V','m'],
+                static_read_parameters={},
+                static_set_parameters={'Laser Power': (self._laser().set_power, 1e-6, 'W')},
+                start_function=None,
+                end_function=None,
+        )
         
         #This ODMR version just scans frequency manually in CW mode.
-        def start_microwave():
+
+        self.odmrScanner = self.ScanDevice('ODMR',
+                lambda x: setattr(self._microwave(), 'cw_frequency', x),
+                data_labels=['Frequency'], # x, y1, y2,...
+                data_units=['Hz'],
+                static_read_parameters={},
+                static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm')},
+                start_function=lambda : (self._microwave().set_cw(), self._microwave().cw_on()),
+                end_function=lambda : self._microwave().cw_off(),
+        )
+
+        #This ODMR version scans frequency manually in Pulsed mode.
+        #Set up channels for ratio
+        self._scanner_channels = list(self._data_scanner().digital_channels_C)
+        self._scanner_channels.sort()
+        self._pulsed_numerator_channel = self._scanner_channels[0] #Default
+        if len(self._scanner_channels)>1:
+            self._pulsed_denominator_channel = self._scanner_channels[1] #Default
+        else:
+            self._pulsed_denominator_channel = self._scanner_channels[0] #Default
+        #print('Scanner Channels',self._scanner_channels)
+
+        def _pulsed_ODMR_getY(self):
+            # Get ratio of digital channels as selected
+            currentPoint = self._raw_data[self._line_counter][self._point_order[self._point_counter]]
+            dev_y_len = self.pulsedOdmrScanner.len_y
+            numIdx = 1+dev_y_len + self._scanner_channels.index(self._pulsed_numerator_channel)
+            denIdx = 1+dev_y_len + self._scanner_channels.index(self._pulsed_denominator_channel)
+            if currentPoint[denIdx]==0:
+                return 0
+            else:
+                return currentPoint[numIdx]/currentPoint[denIdx]
+
+        def _pulsed_start_scan(self):
+            self._pulsed_initialGate = self._data_scanner().gate_on_external_clock
+            self._data_scanner().gate_on_external_clock = True
             self._microwave().set_cw()
             self._microwave().cw_on()
 
-        self.odmrScanner = self.ScanDevice('ODMR',
-                            lambda x: setattr(self._microwave(), 'cw_frequency', x),
-                            data_labels=['Frequency'], # x, y1, y2,...
-                            data_units=['Hz'],
-                            static_read_parameters={},
-                            static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm')},
-                            #start_function=start_microwave,
-                            start_function=lambda : (self._microwave().set_cw(), self._microwave().cw_on()),
-                            end_function=lambda : self._microwave().cw_off(),
+        def _pulsed_end_scan(self):
+            self._data_scanner().gate_on_external_clock = self._pulsed_initialGate
+            del self._pulsed_initialGate
+            self._microwave().cw_off()
+
+        self.pulsedOdmrScanner = self.ScanDevice('Pulsed ODMR',
+                lambda x: setattr(self._microwave(), 'cw_frequency', x),
+                lambda : _pulsed_ODMR_getY(self),
+                data_labels=['Frequency','Ratio'], # x, y1, y2,...
+                data_units=['Hz',''],
+                static_read_parameters={},
+                static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
+                                       'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
+                                                           self._pulsed_numerator_channel, '', self._scanner_channels),
+                                       'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
+                                                             self._pulsed_denominator_channel, '', self._scanner_channels),},
+                start_function=lambda : _pulsed_start_scan(self),
+                end_function=lambda : _pulsed_end_scan(self)
         )
+
 
         self.device_dict = {v.name: v for v in self.__dict__.values() if hasattr(v, '_scanDevice_')} # For populating list
 
@@ -445,11 +517,13 @@ class SimpleScanLogic(LogicBase):
         self._shuffle_x = value
         self.sigScanParametersUpdated.emit({'shuffle_x' : value})
 
-
+    
     @QtCore.Slot()
     def start_scan(self):
         """ Starting a scan.        
         """
+        
+        sleep(0.1)  #Brief pause to allow settings to set in case start clicked on immediately from other setting. Maybe better way of doing this?
         if self.x_range[2] == 0:
             self.log.error('X range not set for device, cannot start scan.')
             return
@@ -515,9 +589,8 @@ class SimpleScanLogic(LogicBase):
             scanner = self._data_scanner()
             device = self.device_dict[self._device_select]
             self._metadata = device._metadata if device._metadata is not None else {}
-            self._scanner_channels = list(scanner.active_channels)
             self._data_labels = device._data_labels + self._scanner_channels
-            self._data_units = device._data_units + [scanner._channel_units[key] for key in self._scanner_channels]
+            self._data_units = device._data_units + [scanner._channel_units[key.split('-')[0]] for key in self._scanner_channels]
             self._data_header = [f'{self._data_labels[ii]} ({self._data_units[ii]})' for ii in range(len(self._data_labels))]
             self._raw_data = np.full((self._number_scans,len(self._x_data),len(self._data_header)),np.nan)
             self._line_counter=0
@@ -546,14 +619,19 @@ class SimpleScanLogic(LogicBase):
             
             if point_ready: 
                 # _raw_data is initialized in start_scan, so we just need to populate it here.
-                self._raw_data[self._line_counter][self._point_order[self._point_counter]][0] = self._x_data[self._point_order[self._point_counter]]
-                devY = device.get_y()
-                dev_y_len = 0
-                if devY is not None:
-                    dev_y_len = len(devY)
-                    self._raw_data[self._line_counter][self._point_order[self._point_counter]][1:1+dev_y_len] = devY
+                # Scanner data first, though it's after device data in the raw_data
+                dev_y_len = device.len_y
                 res = [self._scan_worker.result[channel][0] for channel in self._scanner_channels]
                 self._raw_data[self._line_counter][self._point_order[self._point_counter]][1+dev_y_len:] = res
+
+                #Device data
+                self._raw_data[self._line_counter][self._point_order[self._point_counter]][0] = self._x_data[self._point_order[self._point_counter]]
+                if dev_y_len>0:
+                    devY = device.get_y()
+                    if devY is not None:
+                        dev_y_len = len(devY)
+                        self._raw_data[self._line_counter][self._point_order[self._point_counter]][1:1+dev_y_len] = devY
+
                 self._point_counter+=1
                 self.sigDataPointReady.emit(True)
             
@@ -575,7 +653,7 @@ class SimpleScanLogic(LogicBase):
                     self._line_counter+=1
                     if self._line_counter>=self._number_scans:
                         self.sigScanComplete.emit(True)
-                        self.module_state.unlock()
+                        self.stop_scan()  #Call end of scan function and unlock.
                         return
                     else:
                         self._point_counter=0
