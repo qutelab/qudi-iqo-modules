@@ -360,7 +360,7 @@ class AndorSpectrometer(SpectrometerInterface):
         for i in range(1, n_gratings+1):
             info = self._get_grating_info(i)
             if info:
-                name = f"{info['lines']} lines/mm, blaze {info['blaze_wavelength']} nm"
+                name = f"{np.round(info['lines'],1)} lines/mm, blaze {info['blaze_wavelength']} nm"
                 grating_dict['by_index'][i] = name
                 grating_dict['by_name'][name] = i
         return grating_dict
