@@ -235,6 +235,29 @@ class MicrowaveSRSSG(MicrowaveInterface):
                 self._write(f'FREQ {frequency:e}')
             if power is not None:
                 self._write(f'AMPR {power:f}')
+                
+    def set_pulsed(self, frequency=None, power=None):
+        """Configure the pulsed microwave output.
+
+        @param float frequency: frequency to set in Hz
+        @param float power: power to set in dBm
+        """
+        with self._thread_lock:
+            if self.module_state() != 'idle':
+                raise RuntimeError('Unable to set CW parameters. Microwave output active.')
+            self._assert_cw_parameters_args(frequency, power)
+
+            # if self._is_vector_sg:
+                ## set the modulation subtype to analog
+                # self._write('STYP 0')
+            if frequency is not None:
+                self._write(f'FREQ {frequency:e}')
+            if power is not None:
+                self._write(f'AMPR {power:f}')
+            
+            self._write(f"TYPE 7")
+            self._write(f"QFNC 5")
+            self._write(f"MODL 1")
 
     def configure_scan(self, power, frequencies, mode, sample_rate):
         """

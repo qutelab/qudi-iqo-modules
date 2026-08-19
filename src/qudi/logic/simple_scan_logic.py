@@ -59,12 +59,14 @@ class SimpleScanLogic(LogicBase):
             laser: laser_dummy
             microwave: microwave_dummy
             data_scanner: finite_sampling_input_dummy
+            awg: simple_awg_logic
     """
 
     # declare connectors
     _laser = Connector(name='laser', interface=SimpleLaserInterface)
     _microwave = Connector(name='microwave', interface=MicrowaveInterface)
     _data_scanner = Connector(name='data_scanner', interface=FiniteSamplingInputInterface)
+    _awg = Connector(name='awg', interface='SimpleAWGLogic')
 
     # declare config options
     _save_thumbnails = ConfigOption(name='save_thumbnails', default=True)
@@ -358,13 +360,18 @@ class SimpleScanLogic(LogicBase):
         def _pulsed_start_scan(self):
             self._pulsed_initialGate = self._data_scanner().gate_on_external_clock
             self._data_scanner().gate_on_external_clock = True
-            self._microwave().set_cw()
+            if self._microwave().cw_frequency < 400e6:
+                self._microwave().set_pulsed(frequency=4e8)
+            else:
+                self._microwave().set_pulsed()
+            self._awg().start_output()
             self._microwave().cw_on()
 
         def _pulsed_end_scan(self):
             self._data_scanner().gate_on_external_clock = self._pulsed_initialGate
             del self._pulsed_initialGate
             self._microwave().cw_off()
+            self._awg().stop_output()
 
         self.pulsedOdmrScanner = self.ScanDevice('Pulsed ODMR',
                 lambda x: setattr(self._microwave(), 'cw_frequency', x),
@@ -379,6 +386,21 @@ class SimpleScanLogic(LogicBase):
                                                              self._pulsed_denominator_channel, '', self._scanner_channels),},
                 start_function=lambda : _pulsed_start_scan(self),
                 end_function=lambda : _pulsed_end_scan(self)
+        )
+        self.pulsedRabiScanner = self.ScanDevice('Rabi',
+            lambda x: self._awg().set_pulse_time(x),
+            lambda : _pulsed_ODMR_getY(self),
+            data_labels=['Time','Ratio'], # x, y1, y2,...
+            data_units=['s',''],
+            static_read_parameters={},
+            static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
+                                   'Frequency': (lambda frequency: setattr(self._microwave(), 'cw_frequency', frequency), 2.7e9, 'Hz'),
+                                   'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
+                                                       self._pulsed_numerator_channel, '', self._scanner_channels),
+                                   'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
+                                                         self._pulsed_denominator_channel, '', self._scanner_channels),},
+            start_function=lambda : _pulsed_start_scan(self),
+            end_function=lambda : _pulsed_end_scan(self)
         )
 
 

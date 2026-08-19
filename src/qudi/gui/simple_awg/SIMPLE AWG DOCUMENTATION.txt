@@ -1,0 +1,90 @@
+SIMPLE AWG DOCUMENTATION:
+
+- The general purpose of the SimpleAWGGui is to control the spectrum AWG and the pulse train sequence
+
+Recommended order:
+- Ensure that AWG is connected using "Connect to AWG" if available
+	- Check and modify channel states if needed
+- Create pulse blocks in "Create Pulse"
+- Create sequence of pulse blocks in "Sequence Manager" (using "Add step", "Remove Step", and "Load Sequence")
+- Name sequence and ensure Current Sequence is on the empty square
+- Click "Write Sequence"
+- Click "Upload Sequence" -> May not be necessary if using SimpleScanGUI
+- Click "Start Output" -> click "Stop Output" when finished
+
+
+Waveforms tab:
+
+- Channel is selected using the drop down list on the bottom of this tab
+- Graph showcases the current pulse train on the selected channel at the bottom (up to 1 mil data points)
+- Load CSV: loads numpy array from chosen CSV file onto selected channel
+- Upload: Loads the waveforms into AWG memory (upload must happen before start and when pulse train is changed)
+- Start: Calls logic to start the AWG
+- Stop: Calls logic to stop the AWG
+- Clear: Updates the current pulse train to be empty on all channels
+- Connect to AWG/Disconnect to AWG: Toggles the connection to the AWG must be connected for upload, start, and top
+
+Channels tab:
+
+- Analog:
+	- Formatted as a_ch{num}
+	- Checkbox toggles whether channel is active or not (changes applied on state change)
+	- Voltage and impedance can be modified
+	- Apply Changes: applies voltage and impedance changes
+- Digital:
+	- Formatted as d_ch{num}
+	- Checkbox toggles whether channel is active or not (changes applied on state change)
+
+I/Q Signals:
+	- Tells logic that the two chosen channels are linked as I/Q format
+	- Add I/Q Signal will update current I/Q channels
+	- Defaults to the first two active analog channels
+
+
+Create Pulse tab:
+
+- Top section defines a number of pulse types
+- Pulses:
+	- Defines pulse length, pause length and pulse amplitude, also includes functionality for increments
+- Variable Pulses:
+	- Defines pulse amplitude, allows a text input to define a variable that describes pulse and pause length
+	- Current implementation only applies when scanning using exterior modules (uses first variable typically)
+- Frequency Sweep:
+	- Uses cos(a + b) = cos(a)cos(b) - sin(a)sin(b)
+	- Can create a sine and cosine signal on I/Q that will sweep the frequency of the signal
+
+- Create Pulse Block:
+	- Block name denotes the name of the block you are creating
+	- Plot Pulse Block: Plots the current block in the graph below
+	- Create Pulse Block: Creates a pulse block with the given block name
+	- Save Pulse Block: Saves the pulse block to the save file path with the given name
+	- Bottom selection allows a pulse block to be uploaded directly to a specific channel
+
+Sequence Manager tab:
+
+- Add step: adds a step to the currently edited sequence
+- Remove step: remove a step from the current edited sequence
+- Write Sequence: compiles the sequence and sends it to logic to be uploaded
+- Save Sequence: saves the selected sequence to save file path
+- Current Sequence selector: Selects the current sequence to write or save (if this does not match the text input those buttons will write/save the sequence selected not the one currently showcased)
+- Load Sequence: loads the steps in the currently selected sequence
+
+- The general principles of using this tab is to create pulse blocks in "Create Pulse" tab and setup channels in "Channels" tab
+- Next add steps and assign pulses. This uses "Send Trig" and "Receive Trig" to compile the order of sequences.
+- "Call Trig" of 0 are ignored. If a step has a "Receive Trig" of 0 it will run first and call the set "Call Trig". These will then be stacked (IE trig 0 -> trig 1 -> trig 3 -> trig 2, order is not necessary).
+- There may be more than one step with a given "Receive Trig". Then depending on the chosen number of "Reps" this stack of steps will be repeated.
+- IQ phase only applies if IQ is a chosen channel it aims to use Quadrate Amplitude Modulation to set the phase of the microwave.
+- If a channel is not being used while another is running idles (elements of 0) will be added to pad to ensure proper alignment of pulses).
+- If necessary the logic tracks how many times a block has been run allowing for increments to be used. (How many repetitions of using a block are needed to equal one iteration can be set at the top)
+- Example:
+Step A: Pulse A, channels = IQ, d_ch1, reps = 3, Send: 1, Receive: 0, IQ Phase: 0
+Step B: Pulse B, channels = d_ch2, reps = 1, Send: 2, Receive: 0, IQ Phase: 0
+Step C: Pulse C, channels = d_ch3, reps = 2, Send: 0, Receive: 0, IQ Phase: 0
+
+Result: I will refer to 0 as a number of 0's equivalent to the length of the largest pulse in that column
+
+a_ch1 (IQ: i): 		Pulse A 	0		0	0 		Pulse A 	0		0	0		Pulse A 	0		0	0
+a_ch2 (IQ: q): 		0		0		0	0		0		0		0	0		0		0		0	0
+d_ch1: 			Pulse A 	0		0	0		Pulse A 	0		0	0		Pulse A 	0		0	0
+d_ch2: 			0 		Pulse B		0	0		0 		Pulse B		0	0		0 		Pulse B		0	0
+d_ch3: 			0 		0		Pulse C	Pulse C		0 		0		Pulse C	Pulse C		0 		0		Pulse C	Pulse C
