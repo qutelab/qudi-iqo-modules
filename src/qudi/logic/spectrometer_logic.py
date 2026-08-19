@@ -35,7 +35,7 @@ from qudi.util.datafitting import FitContainer, FitConfigurationsModel
 
 
 class SpectrometerLogic(LogicBase):
-    """This logic module gathers data from the spectrometer.
+    """This logic module gathers data from the spectrometer. Note: Camera connection made in spectrometer hardware.
 
     Demo config:
 
@@ -43,8 +43,7 @@ class SpectrometerLogic(LogicBase):
         module.Class: 'spectrometer_logic.SpectrometerLogic'
         connect:
             spectrometer: 'myspectrometer'
-            camera: 'mycamera'
-            modulation_device: 'my_odmr'
+            ###modulation_device: 'my_odmr' #Not sure if this still works
     """
 
     # declare connectors

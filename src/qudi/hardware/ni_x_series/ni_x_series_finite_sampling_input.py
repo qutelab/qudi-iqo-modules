@@ -262,7 +262,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 if type(source)==list:
                     digital_channels_C.extend([f'{ch}-{chS}' for chS in source])
                 else:
-                    digital_channels_C.append(f'{ch}.{source}')
+                    digital_channels_C.append(f'{ch}-{source}')
             else:
                 digital_channels_C.append(ch)
         self.digital_channels_C = frozenset(digital_channels_C)

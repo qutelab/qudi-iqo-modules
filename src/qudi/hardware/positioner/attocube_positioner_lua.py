@@ -105,6 +105,7 @@ class AttocubeANC300(PositionerInterface):
 
     def _query(self, prop):
         """ Query a property. """
+        self._anc300.flush_read()
         self._anc300.write(f'print({prop})' + self.EOL)
         ret = self._anc300.read_until(self.EOL)
         return ret.strip()

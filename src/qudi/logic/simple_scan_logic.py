@@ -332,7 +332,10 @@ class SimpleScanLogic(LogicBase):
 
         #This ODMR version scans frequency manually in Pulsed mode.
         #Set up channels for ratio
-        self._scanner_channels = list(self._data_scanner().digital_channels_C)
+        try:
+            self._scanner_channels = list(self._data_scanner().digital_channels_C)
+        except:  # In case special channel-source list hasn't been created.
+            self._scanner_channels = list(self._data_scanner().active_channels)
         self._scanner_channels.sort()
         self._pulsed_numerator_channel = self._scanner_channels[0] #Default
         if len(self._scanner_channels)>1:
@@ -503,7 +506,7 @@ class SimpleScanLogic(LogicBase):
     
     @time_wait.setter
     def time_wait(self,value):
-        assert value>0, 'time_wait must be greater than 0'
+        assert value>=0, 'time_wait must be greater than or equal to 0'
         self._time_wait = value
         self.sigScanParametersUpdated.emit({'time_wait' : value})
 

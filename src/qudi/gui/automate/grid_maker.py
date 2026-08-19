@@ -16,8 +16,8 @@ class GridApp(qw.QWidget):
         self.setWindowTitle("Grid Generator")
         self.parent=parent
         #self.scanning_data_logic = self.parent._connectors['scanning_data_logic']
-        for name, connector in self.parent._connectors.items():
-            setattr(self, name, connector)
+        #for name, connector in self.parent._connectors.items():
+        #    setattr(self, name, connector)
         
 
         # Layout
@@ -72,8 +72,10 @@ class GridApp(qw.QWidget):
 
         # Point counts
         self.n12 = qw.QSpinBox()
+        self.n12.setMaximum(10000)
         self.n12.setValue(10)
         self.n23 = qw.QSpinBox()
+        self.n23.setMaximum(10000)
         self.n23.setValue(10)
 
         inputLayout.addWidget(qw.QLabel("N points (1→2)"),3,0)
@@ -108,7 +110,8 @@ class GridApp(qw.QWidget):
         self.grid=None
         self.gridCR=None
 
-
+    def _connect_scan_logic(self,logic):
+        setattr(self,'scanning_data_logic',logic)
         
     def exec(self):
         self.load_data()
@@ -121,7 +124,7 @@ class GridApp(qw.QWidget):
 
     def update_image(self):
         (xmin, xmax), (ymin, ymax) = self.extent
-        self.img.setImage(self.data.T)
+        self.img.setImage(self.data)
         self.img.setRect(QtCore.QRectF(xmin, ymin, xmax - xmin, ymax - ymin))
 
     def set_pick_mode(self, corner):

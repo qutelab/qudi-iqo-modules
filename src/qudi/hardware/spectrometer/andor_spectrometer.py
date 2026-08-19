@@ -20,7 +20,6 @@ from qudi.core.connector import Connector
 from qudi.core.configoption import ConfigOption
 from qudi.core.statusvariable import StatusVar
 from qudi.interface.spectrometer_interface import SpectrometerInterface
-from qudi.interface.camera_interface import CameraInterface
 
 from ctypes import *
 import numpy as np
@@ -45,7 +44,8 @@ class AndorSpectrometer(SpectrometerInterface):
     myspectrometer:
         module.Class: 'spectrometer.andor_spectrometer.AndorSpectrometer'
         connect:
-            camera: 'andor_camera'
+            camera_direct: 'andor_camera_d'
+            camera_side: 'andor_camera_s'
         options:
             dll_location: 'C:\\PATH TO\\atspectrograph.dll' # path to library file, likely in Andor Solis installation folder
             ini_location: 'C:\\PATH TO\\SPECTROG.ini' # # Optional (?), path to detector INI file, likely in Andor Solis installation folder
@@ -56,7 +56,8 @@ class AndorSpectrometer(SpectrometerInterface):
     _dll_location = ConfigOption('dll_location', missing='error')
     _ini_location = ConfigOption('ini_location', default='')
     _exposure_time = StatusVar(name='exposure_time', default=1)
-    _camera = Connector(name='camera', interface='CameraInterface')
+    _camera_direct = Connector(name='camera_direct', interface='CameraInterface', optional=True)
+    _camera_side = Connector(name='camera_side', interface='CameraInterface', optional=True)
     _idx = 0  # Spectrometer Index, only supporting one spectrometer for now.
     #_serial = ConfigOption(name='spectrometer_serial', default=None, missing='warn')
     
@@ -89,20 +90,22 @@ class AndorSpectrometer(SpectrometerInterface):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
         self._spectrometer = None
+        self._output_port_cached = None
 
     def on_activate(self):
         """ Activate module.
         """
+        if self._camera_direct is None and self._camera_side is None:
+            raise RuntimeError("Cannot load spectrometer, no camera configured")
         self._dll = cdll.LoadLibrary(self._dll_location)
         self._dll.ShamrockInitialize(self._ini_location)
 
         #Setup Spectrometer-Camera link, detector parameters (number of pixels, pixel width) from the camera
         self.exposure_time = self._exposure_time
-        pixel_size=self._camera().get_pixel_size()  # um
-        num_pixels=self._camera().get_size()
-        self._set_pixel_width(pixel_size[0])  # input is um as integer
-        self._set_number_pixels(num_pixels[0])
+        self._get_output_port()  # To cache for camera reference.
+        
         self.load_calibration()
         self.grating_dict = self._get_grating_dict()
 
@@ -124,8 +127,34 @@ class AndorSpectrometer(SpectrometerInterface):
         return specdata
 
     def load_calibration(self):
+        ## TODO: Check if these values are assigned for each camera port independently so they can be loaded once, or if they need to be set each time the port is changed.
+        pixel_size=self._camera().get_pixel_size()  # um
+        num_pixels=self._camera().get_size()
+        self._set_pixel_width(pixel_size[0])  # input is um as integer
+        self._set_number_pixels(num_pixels[0])
         cal = self._get_calibration()
         self.wavelengths = np.array([calI for calI in cal])*1e-9 # nm -> m
+
+    @property
+    def _camera(self):
+        # For single camera, return only camera, for dual cameras, return currently active one.
+        if self._camera_direct is None:
+            camera = self._camera_side
+        elif self._camera_side is None:
+            camera = self._camera_direct
+        else:
+            output = self._output_port_cached
+            if output is None:
+                output = self.output_port
+            if output=='DIRECT':
+                camera = self._camera_direct
+            elif output=='SIDE':
+                camera = self._camera_side
+            else:
+                raise RuntimeError(f'Camera port error {output}')
+        if camera is None:
+            raise RuntimeError(f'Camera not available')
+        return camera
 
     @property
     def number_pixels(self):
@@ -206,7 +235,9 @@ class AndorSpectrometer(SpectrometerInterface):
         """ Get output port.
             @return str: output port, either 'DIRECT' or 'SIDE'
         """
-        return self._get_output_port()
+        port = self._get_output_port()
+        self._output_port_cached = port
+        return port
     
     @output_port.setter
     def output_port(self, value):
@@ -225,8 +256,9 @@ class AndorSpectrometer(SpectrometerInterface):
             self.log.error(f'output_port needs to be 0 (direct) or 1 (side), but was {value}')
             return
         self._set_output_port(value)
+        self._output_port_cached = self._get_output_port()
         self.load_calibration()
-        #TODO Check if wavelength calibration changes for output ports
+        self.exposure_time = self._exposure_time  # Update value if camera switched.
 
     # Camera property shortcuts
     @property
@@ -243,6 +275,7 @@ class AndorSpectrometer(SpectrometerInterface):
         """
         assert isinstance(value, (float, int)), f'exposure_time needs to be a float in seconds, but was {value}'
         self._camera().set_exposure(float(value))
+        self._exposure_time = value
 
     @property 
     def camera_temperature(self):
@@ -396,6 +429,8 @@ class AndorSpectrometer(SpectrometerInterface):
         msg = ERROR_DICT[self._dll.ShamrockSetFlipperMirror(self._idx, flipper, c_int(port))]
         if msg != "SHAMROCK_SUCCESS":
             self.log.error(f'Error setting output port: {msg}')
+
+        
     
     def _get_output_port(self):
         ''' Get output port, DIRECT or SIDE'''

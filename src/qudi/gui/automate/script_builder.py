@@ -48,15 +48,15 @@ class FunctionCatalog(QtCore.QObject):
     def __init__(self, parent):  #Parent required to access logic modules
         super().__init__(parent)
         self.parent = parent
-        for name, connector in self.parent._connectors.items():
-            setattr(self, name, connector)
-
-        self._functions = self._discover_functions()
+        self.log=self.parent.log
+        
         self.folder_path = None
         self._func_running=False
         self.sigFuncComplete.connect(lambda _: setattr(self,'_func_running',False))
 
     def _discover_functions(self):
+        for name, connector in self.parent._connectors.items():
+            setattr(self, name, connector)
         funcs = {}
         for attr_name in dir(self):
             if attr_name.startswith("_"):
@@ -64,8 +64,17 @@ class FunctionCatalog(QtCore.QObject):
             attr = getattr(self, attr_name)
             if callable(attr) and hasattr(attr, "_meta"):
                 if not attr._meta.get("hidden", False):
-                    funcs[attr_name] = attr
-        return funcs
+                    depend_failed=False
+                    for dep in attr._meta['dep']:
+                        if dep is None:
+                            continue
+                        if getattr(self,dep,None) is None:
+                            self.log.info(f'Dependency {dep} not available, cannot load {attr_name}.')
+                            depend_failed=True
+                            break
+                    if not depend_failed:
+                        funcs[attr_name] = attr
+        self._functions = funcs
 
     def list_functions(self):
         return list(self._functions.keys())
@@ -80,7 +89,7 @@ class FunctionCatalog(QtCore.QObject):
         func_name = func_entry["name"]
         func = self._functions[func_name]
         meta = func._meta
-
+        
         start_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
         self._metadata = {"start_position": start_position}  #Reset each call, will be passed to save functions
         if coord_label is not None: self._metadata["coord_label"] = coord_label  #For logging grid coordinate, can be used in functions by accessing self._metadata
@@ -104,12 +113,13 @@ class FunctionCatalog(QtCore.QObject):
 
 
     @staticmethod
-    def register(params: dict = {}, returns="log", hidden=False):
+    def register(params: dict = {}, dep=None, returns="log", hidden=False):
         def decorator(func):
             func._meta = {
                 "params": params,
+                "dep":dep if type(dep) is list else [dep],
                 "returns": returns,
-                "hidden": hidden
+                "hidden": hidden,
             }
             return func
         return decorator
@@ -117,7 +127,8 @@ class FunctionCatalog(QtCore.QObject):
 
     
     ##############################################################################################################
-    ### Function definitions below. Use @register({param dict} , returns=Optional)  then def function():       ###
+    ### Function definitions below. Use @register({param dict} , dep=name of Required Module(s), returns=Optional)  
+    ### then def function():
     ### If no input parameters, still use @register()
     ### Emits string will save that string to log.
     ### Using lambda ctx in default will pull currently set values when the dialog opens, ctx is the context.
@@ -127,7 +138,7 @@ class FunctionCatalog(QtCore.QObject):
     ##############################################################################################################
 
 
-    @register()
+    @register(dep='optimize_logic')
     def optimize(self):
         self._start_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
         self.optimize_logic().start_optimize()
@@ -147,7 +158,7 @@ class FunctionCatalog(QtCore.QObject):
         self.sigFuncComplete.emit(f"Optimized from {self._start_position} to {final_position}")
         
 
-    @register(params={
+    @register(dep='spectrometer_logic', params={
         "center_wavelength": {"type": float, "default": lambda ctx: ctx.spectrometer_logic().wavelength},
         "exposure_time": {"type": float, "default": lambda ctx: ctx.spectrometer_logic().exposure_time},
         "number_spectra": {"type": int, "default": lambda ctx: ctx.spectrometer_logic().number_spectra},
@@ -184,7 +195,7 @@ class FunctionCatalog(QtCore.QObject):
                                   f"with {self.spectrometer_logic().exposure_time} s exposure time")
         
     
-    @register(params={
+    @register(dep='simple_scan_logic', params={
         "scan_device": {"type": [str], "entries": lambda ctx: ctx.simple_scan_logic().device_dict, 
                         "default": lambda ctx: list(ctx.simple_scan_logic().device_dict.keys())[0]},  #For listable, set values as source list.
         "x_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
@@ -301,32 +312,78 @@ class ParamDialog(QDialog):
             else:
                 res[name] = widget.value()
         return res
-
+from time import sleep
 # ---------------------- MAIN GUI ----------------------
 class ScriptBuilderGUI(GuiBase):
-    optimize_logic = Connector(interface=ScanningOptimizeLogic)
-    scanning_logic = Connector(interface=ScanningProbeLogic)
-    scanning_data_logic = Connector(interface=ScanningDataLogic)
-    spectrometer_logic = Connector(interface=SpectrometerLogic)
-    simple_scan_logic = Connector(interface=SimpleScanLogic)
+    #optimize_logic = Connector(interface=ScanningOptimizeLogic)
+    #scanning_logic = Connector(interface=ScanningProbeLogic)
+    #scanning_data_logic = Connector(interface=ScanningDataLogic)
+
+    # These will be handled manually, not in config.
+    _logic_dict = {  # var_name: (logic_module, interface)
+        'optimize_logic': ('scanning_optimize_logic', ScanningOptimizeLogic),
+        'scanning_logic': ('scanning_probe_logic', ScanningProbeLogic),
+        'scanning_data_logic': ('scanning_data_logic', ScanningDataLogic),
+        'spectrometer_logic': ('spectrometer_logic', SpectrometerLogic),
+        'simple_scan_logic': ('simple_scan_logic', SimpleScanLogic)
+    }
+    for var_name, (logic_module,interface) in _logic_dict.items():
+        locals()[var_name] = Connector(interface=interface,optional=True)
+        
+    #spectrometer_logic = Connector(interface=SpectrometerLogic, optional=True)
+    #simple_scan_logic = Connector(interface=SimpleScanLogic, optional=True)
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._connectors = {
-            'optimize_logic': self.optimize_logic,
-            'scanning_logic': self.scanning_logic,
-            'scanning_data_logic': self.scanning_data_logic,
-            'spectrometer_logic': self.spectrometer_logic,
-            'simple_scan_logic': self.simple_scan_logic
-            }
+        # self._connectors = {
+        #     'optimize_logic': self.optimize_logic,
+        #     'scanning_logic': self.scanning_logic,
+        #     'scanning_data_logic': self.scanning_data_logic,
+        #     'spectrometer_logic': self.spectrometer_logic,
+        #     'simple_scan_logic': self.simple_scan_logic
+        #     }
+        
         self._functionCatalog = FunctionCatalog(self)
         self._grid_maker = GridApp(self)
         self._mw = ScriptBuilder(self)
 
     def on_activate(self):
+        self._connectors = {}
+        module_manager = self._qudi_main.module_manager
+        for var_name, (logic_module, interface) in self._logic_dict.items():
+            if logic_module not in module_manager:
+                self.log.warning(f'Module {logic_module} not found')
+                self._connectors[var_name]=None
+            elif not module_manager[logic_module].is_active:
+                try:
+                    module_manager.activate_module(logic_module)
+                    getattr(self,var_name).connect(module_manager[logic_module].instance)
+                    self._connectors[var_name]=getattr(self,var_name)
+                except Exception as e:
+                    self.log.warning(f'Error loading module {logic_module}:\n{e}')
+                    self._connectors[var_name]=None
+            else:
+                self._connectors[var_name]=getattr(self,var_name)
+
+            if var_name == 'scanning_logic' and self._connectors[var_name] is None:
+                raise RuntimeError(f'Failed to load, script builder requires {logic_module}.')
+
+        self._functionCatalog._discover_functions()
+        self._mw._populate_list()
+
+        if self._connectors['scanning_data_logic'] is not None:
+            self._grid_maker._connect_scan_logic(self._connectors['scanning_data_logic'])
+        else:
+            self._mw.grid_btn.setEnabled(False)
+            pass
+
+
         self.show()
     def on_deactivate(self):
-        pass
+        for name,connector in self._connectors.items():
+            if connector is not None:
+                connector.disconnect()
+
     def show(self):
         self._mw.resize(1000, 600)
         self._mw.show()
@@ -354,7 +411,7 @@ class ScriptBuilder(QMainWindow):
         cw.setLayout(main_layout)
 
         self.func_list = QListWidget()
-        self.func_list.addItems(self.catalog.list_functions())
+        
 
         self.add_btn = QPushButton("Add Function")
         self.add_btn.clicked.connect(self.add_function)
@@ -406,6 +463,11 @@ class ScriptBuilder(QMainWindow):
         main_layout.addLayout(left_layout)
         main_layout.addLayout(right_layout)
         self.setLayout(main_layout)
+
+        self._set_running(False)
+
+    def _populate_list(self):
+        self.func_list.addItems(self.catalog.list_functions())
 
     def _set_running(self, state):
         self._running = state
@@ -529,6 +591,9 @@ class ScriptBuilder(QMainWindow):
 
     
     def start_script(self):
+        if len(self.script)==0:
+            return
+        
         if (self.folder_path is None) or (not os.path.isdir(self.folder_path)):
             self.select_folder()
             if self.folder_path is None:  #User cancelled folder selection
@@ -556,10 +621,6 @@ class ScriptBuilder(QMainWindow):
         #for ii,coords in enumerate(self._coordinate_list):
             #self.log_result(f'{ii+1} : {coords}')
 
-        try: 
-            self.catalog.sigFuncComplete.disconnect(self.next_script_step)  #In case this was left connected.
-        except:
-            pass
         self.catalog.sigFuncComplete.connect(self.next_script_step, Qt.QueuedConnection)  #Connect function completion signal to next step
         
 
@@ -568,31 +629,34 @@ class ScriptBuilder(QMainWindow):
 
     @QtCore.Slot()
     def next_script_step(self, result=None):
-        self.progress.setValue(self._current_coord_idx*len(self.script)+self._current_script_idx)
-        if result is not None:
-            self.log_result(result)
+        try:
+            self.progress.setValue(self._current_coord_idx*len(self.script)+self._current_script_idx)
+            if result is not None:
+                self.log_result(result)
 
-        if not self._running: return  # Something called this after script was stopped, ignore.
+            if not self._running: return  # Something called this after script was stopped, ignore.
 
-        if self._current_script_idx == 0: # Goto location and update lists
-            if self.grid_checkbox.isChecked():
-                if self._current_coord_idx==0:
-                    self.grid_maker.update_done(None, self.coordinate_list[self._current_coord_idx])
-                elif self._current_coord_idx < len(self.coordinate_list):
-                    self.grid_maker.update_done(self.coordinate_list[:self._current_coord_idx], self.coordinate_list[self._current_coord_idx])
-                else:
-                    self.grid_maker.update_done(self.coordinate_list[:self._current_coord_idx], None)
+            if self._current_script_idx == 0: # Goto location and update lists
+                if self.grid_checkbox.isChecked():
+                    if self._current_coord_idx==0:
+                        self.grid_maker.update_done(None, self.coordinate_list[self._current_coord_idx])
+                    elif self._current_coord_idx < len(self.coordinate_list):
+                        self.grid_maker.update_done(self.coordinate_list[:self._current_coord_idx], self.coordinate_list[self._current_coord_idx])
+                    else:
+                        self.grid_maker.update_done(self.coordinate_list[:self._current_coord_idx], None)
 
-            if self._current_coord_idx >= len(self._coordinate_list):
-                self.finish_script()
-                return
-        
-            coords = {}
-            coords['x']=self._coordinate_list[self._current_coord_idx][0]
-            coords['y']=self._coordinate_list[self._current_coord_idx][1]
-            coords['z']=self._coordinate_list[self._current_coord_idx][2]
-            self.parent.scanning_logic().set_target_position(coords, move_blocking=True)
-            self.log_result(f'{self._current_coord_idx+1}/{len(self._coordinate_list)} Moved to : {coords}')
+                if self._current_coord_idx >= len(self._coordinate_list):
+                    self.finish_script()
+                    return
+            
+                coords = {}
+                coords['x']=self._coordinate_list[self._current_coord_idx][0]
+                coords['y']=self._coordinate_list[self._current_coord_idx][1]
+                coords['z']=self._coordinate_list[self._current_coord_idx][2]
+                self.parent.scanning_logic().set_target_position(coords, move_blocking=True)
+                self.log_result(f'{self._current_coord_idx+1}/{len(self._coordinate_list)} Moved to : {coords}')
+        except Exception as e:
+            self.finish_script(error=e)
         
         self.script_list.setCurrentRow(self._current_script_idx)
         QApplication.processEvents()
@@ -607,7 +671,7 @@ class ScriptBuilder(QMainWindow):
         
 
 
-    def finish_script(self,interrupted=False):
+    def finish_script(self,interrupted=False,error=None):
         if not self._running:
             return
         
@@ -621,6 +685,10 @@ class ScriptBuilder(QMainWindow):
             self.catalog.sigInterrupt.emit()
             self.log_result("Script execution interrupted by user")
             QMessageBox.information(self, "Done", "Execution interrupted by user")
+        elif error is not None:
+            self.catalog.sigInterrupt.emit()
+            self.log_result(f"Script execution failed due to error: {error}")
+            QMessageBox.information(self, f"Script execution failed due to error:", "{error}")
         else:
             self.log_result("Script execution complete")
             QMessageBox.information(self, "Done", "Execution complete")
