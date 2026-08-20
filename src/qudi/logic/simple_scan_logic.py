@@ -392,9 +392,7 @@ class SimpleScanLogic(LogicBase):
                 return currentPoint[numIdx]/currentPoint[denIdx]
 
         def _pulsed_start_scan(self):
-            print('starting pulse')
             self._pulsed_initialGate = self._data_scanner()._gate_on_external_clock
-            print('starting pulse2')
             self._data_scanner()._gate_on_external_clock = True
             if self._microwave().cw_frequency < 400e6:
                 self._microwave().set_pulsed(frequency=1e8)
