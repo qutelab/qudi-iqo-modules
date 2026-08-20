@@ -438,9 +438,7 @@ class SimpleScanGui(GuiBase):
         device = logic.device_dict.get(logic.scan_device)
         if device is None or not device._static_set_parameters:
             return
-        if label in device._static_set_parameters:
-            old = device._static_set_parameters[label]
-            device._static_set_parameters[label] = (old[0], value, *old[2:])
+        device.update_static_set_parameter_value(label,value)
 
     @QtCore.Slot(float, float, int)
     def _x_range_changed(self, start, end, steps):

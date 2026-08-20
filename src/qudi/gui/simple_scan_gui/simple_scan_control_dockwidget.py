@@ -218,7 +218,7 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
             return
 
         for label, entry in params.items():
-            print('Populating:',label,entry)
+            #print('Populating:',label,entry)
             if len(entry)==3:
                 value,unit = entry[1:]
                 constraint=None

@@ -206,6 +206,10 @@ class MicrowaveDummy(MicrowaveInterface):
             if frequency is not None:
                 self._cw_frequency = frequency
                 self.log.debug(f'Setting CW frequency to {frequency:.9e} Hz')
+
+    def set_pulsed(self, frequency=None, power=None):
+        self.log.debug('Setting up pulsed')
+        self.set_cw(frequency,power)
             
 
     def cw_on(self):
