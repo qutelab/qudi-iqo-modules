@@ -66,6 +66,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
     _trigger_source = ConfigOption(name='trigger_source',  missing='error')
     _trigger_edge = ConfigOption(name='trigger_edge', default="RISING",
                                  constructor=lambda x: ni.constants.Edge[x.upper()], missing='nothing')
+    _enable_dig_filter = ConfigOption(name='enable_dig_filter', default=True)
     #_rw_timeout = ConfigOption('read_write_timeout', default=10, missing='nothing')  #Not implemented yet
 
     # Defaults
@@ -335,11 +336,34 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                     reader.read_many_sample_uint32(buffer[:n], number_of_samples_per_channel=n)
                     buffer[n:] = 0
 
-                    bc = np.bincount(buffer//self.downsample)
+                    bc = np.bincount(buffer[:n]//self.downsample)
                     bc = bc[:len(hist)]   # Hm, do I want sampling time? Or just use the triggers to automatically reset.
                     hist[:len(bc)] += bc
             return self.data
 
+
+    def acquire_sample_diff(self):
+        with self._thread_lock:
+            if len(self._di_readers)==0:
+                self.log.warning(f'acquire_sample called while no data_readers were initialized')
+                return None
+            for chan,reader in self._di_readers.items():
+                task = reader._task
+                n = task.in_stream.avail_samp_per_chan  # Need to pass the array-view correctly sized to match what's in the buffer.
+                if (n==0) and self.module_state() == 'idle':
+                    self.log.error('Unable to read data. Device is not running and no data in buffer.')
+                    return None
+                if n > 0:
+                    buffer = self._data_buffer
+                    hist =  self.data[chan][1]
+                    n = min(n, len(buffer))  # guard against a burst bigger than your scratch buffer
+                    reader.read_many_sample_uint32(buffer[:n], number_of_samples_per_channel=n)
+                    buffer[n:] = 0
+
+                    bc = np.bincount(np.diff(buffer[:n])//self.downsample)
+                    bc = bc[:len(hist)]   # Hm, do I want sampling time? Or just use the triggers to automatically reset.
+                    hist[:len(bc)] += bc
+            return self.data
 
 
     def terminate_all_tasks(self):
@@ -353,6 +377,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                     self._di_task_handles[-1].stop()
                 self._di_task_handles[-1].close()
             except ni.DaqError:
+                self._di_task_handles[-1].close()
                 self.log.exception('Error while trying to terminate digital counter task.')
                 err = -1
             finally:
@@ -512,13 +537,17 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                         sample_mode=ni.constants.AcquisitionType.CONTINUOUS,
                         active_edge=self._trigger_edge
                     )
+                    
+                    if self._enable_dig_filter:
+                        task.timing.samp_clk_dig_fltr_enable = True
+                        task.timing.samp_clk_dig_fltr_min_pulse_width = 20e-9
 
                     ci_chan.ci_count_edges_count_reset_enable = True
                     ci_chan.ci_count_edges_count_reset_term = f"/{self._device_name}/{self.trigger_source}"
                     ci_chan.ci_count_edges_count_reset_active_edge = self._trigger_edge
                     ci_chan.ci_count_edges_count_reset_reset_cnt = 0
 
-                except ni.DaqError:
+                except:
                     try:
                         task.close()
                         del task
