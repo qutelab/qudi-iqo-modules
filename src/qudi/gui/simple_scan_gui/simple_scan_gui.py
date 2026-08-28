@@ -167,24 +167,7 @@ class SimpleScanGui(GuiBase):
         dw.sigDeviceChanged.connect(
             self._device_changed, QtCore.Qt.ConnectionType.QueuedConnection
         )
-        dw.sigXRangeChanged.connect(
-            self._x_range_changed, QtCore.Qt.ConnectionType.QueuedConnection
-        )
-        dw.sigTimePerChanged.connect(
-            self._time_per_changed, QtCore.Qt.ConnectionType.QueuedConnection
-        )
-        dw.sigTimeWaitChanged.connect(
-            self._time_wait_changed, QtCore.Qt.ConnectionType.QueuedConnection
-        )
-        dw.sigNumberScansChanged.connect(
-            self._number_scans_changed, QtCore.Qt.ConnectionType.QueuedConnection
-        )
-        dw.sigShuffleXChanged.connect(
-            self._shuffle_x_changed, QtCore.Qt.ConnectionType.QueuedConnection
-        )
-        dw.sigStaticSetParamChanged.connect(
-            self._static_set_param_changed, QtCore.Qt.ConnectionType.QueuedConnection
-        )
+        dw.sigParameterChanged.connect(self._change_scan_parameters, QtCore.Qt.ConnectionType.QueuedConnection)
 
         # Re-render plots when the user changes the channel or normalise selectors
         self._mw.plot_widget.x_channel_combo.currentIndexChanged.connect(
@@ -205,11 +188,7 @@ class SimpleScanGui(GuiBase):
 
         dw = self._mw.control_dockwidget
         dw.sigDeviceChanged.disconnect(self._device_changed)
-        dw.sigXRangeChanged.disconnect(self._x_range_changed)
-        dw.sigTimePerChanged.disconnect(self._time_per_changed)
-        dw.sigTimeWaitChanged.disconnect(self._time_wait_changed)
-        dw.sigNumberScansChanged.disconnect(self._number_scans_changed)
-        dw.sigShuffleXChanged.disconnect(self._shuffle_x_changed)
+        dw.sigParameterChanged.disconnect(self._update_scan_parameters)
         dw.sigStaticSetParamChanged.disconnect(self._static_set_param_changed)
 
         self._mw.plot_widget.x_channel_combo.currentIndexChanged.disconnect()
@@ -236,6 +215,9 @@ class SimpleScanGui(GuiBase):
         logic.sigScanComplete.connect(
             self._on_scan_complete, QtCore.Qt.ConnectionType.QueuedConnection
         )
+        logic.sigDeviceUpdated.connect(
+            self._update_device_select, QtCore.Qt.ConnectionType.QueuedConnection
+        )
 
     def __disconnect_logic_signals(self):
         logic = self._simple_scan_logic()
@@ -245,6 +227,7 @@ class SimpleScanGui(GuiBase):
         logic.sigLineReady.disconnect(self._on_line_ready)
         logic.sigDataPointReady.disconnect(self._on_data_point_ready)
         logic.sigScanComplete.disconnect(self._on_scan_complete)
+        logic.sigDeviceUpdated.disconnect(self._update_device_select)
 
     # ── Toolbar slots ─────────────────────────────────────────────────────────
 
@@ -291,6 +274,12 @@ class SimpleScanGui(GuiBase):
     def _update_scan_parameters(self, params):
         """Reflect parameter changes emitted by the logic."""
         self._mw.control_dockwidget.set_scan_parameters(params)
+
+    @QtCore.Slot(str)
+    def _update_device_select(self,device):
+        self._mw.control_dockwidget.set_current_device(device)
+        self._update_device_dependent_widgets()
+
 
     @QtCore.Slot()
     def _update_scan_data(self):
@@ -431,40 +420,12 @@ class SimpleScanGui(GuiBase):
             self._simple_scan_logic().scan_device = device_name
             self._update_device_dependent_widgets()
 
+    @QtCore.Slot(str,object)
+    def _change_scan_parameters(self,label,value):
+        self._simple_scan_logic().set_scan_parameter_value(label,value)
+
     @QtCore.Slot(str, object)
     def _static_set_param_changed(self, label, value):
         """Write the new value back into the logic's static_set_parameters dict."""
         logic = self._simple_scan_logic()
-        device = logic.device_dict.get(logic.scan_device)
-        if device is None or not device._static_set_parameters:
-            return
-        device.update_static_set_parameter_value(label,value)
-
-    @QtCore.Slot(float, float, int)
-    def _x_range_changed(self, start, end, steps):
-        self._simple_scan_logic().x_range = (start, end, steps)
-
-    @QtCore.Slot(float)
-    def _time_per_changed(self, value):
-        try:
-            self._simple_scan_logic().time_per = value
-        except AssertionError as exc:
-            self.log.warning(f'Invalid time_per value: {exc}')
-
-    @QtCore.Slot(float)
-    def _time_wait_changed(self, value):
-        try:
-            self._simple_scan_logic().time_wait = value
-        except AssertionError as exc:
-            self.log.warning(f'Invalid time_wait value: {exc}')
-
-    @QtCore.Slot(int)
-    def _number_scans_changed(self, value):
-        try:
-            self._simple_scan_logic().number_scans = value
-        except AssertionError as exc:
-            self.log.warning(f'Invalid number_scans value: {exc}')
-
-    @QtCore.Slot(bool)
-    def _shuffle_x_changed(self, value):
-        self._simple_scan_logic().shuffle_x = bool(value)
+        logic.update_static_set_parameter_value(logic.scan_device, label, value)

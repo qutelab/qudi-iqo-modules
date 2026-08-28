@@ -33,24 +33,12 @@ from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 class SimpleScanControlDockWidget(AdvancedDockWidget):
     """
     Dock widget exposing all scan parameters for SimpleScanLogic.
-
-    Signals
-    -------
-    sigDeviceChanged(str)
-    sigXRangeChanged(float, float, int)   start, end, n_steps
-    sigTimePerChanged(float)
-    sigTimeWaitChanged(float)
-    sigNumberScansChanged(int)
-    sigShuffleXChanged(bool)
     """
 
     sigDeviceChanged = QtCore.Signal(str)
-    sigXRangeChanged = QtCore.Signal(float, float, int)
-    sigTimePerChanged = QtCore.Signal(float)
-    sigTimeWaitChanged = QtCore.Signal(float)
-    sigNumberScansChanged = QtCore.Signal(int)
-    sigShuffleXChanged = QtCore.Signal(bool)
+    sigParameterChanged = QtCore.Signal(str,object) # label, new valule
     sigStaticSetParamChanged = QtCore.Signal(str, object)  # label, new value
+    
 
     def __init__(self, *args, **kwargs):
         super().__init__('Scan Control', *args, **kwargs)
@@ -149,15 +137,17 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.x_end_spinbox.editingFinished.connect(self._emit_x_range)
         self.x_steps_spinbox.editingFinished.connect(self._emit_x_range)
         self.time_per_spinbox.editingFinished.connect(
-            lambda: self.sigTimePerChanged.emit(self.time_per_spinbox.value())
+            lambda: self.sigParameterChanged.emit('time_per', self.time_per_spinbox.value())
         )
         self.time_wait_spinbox.editingFinished.connect(
-            lambda: self.sigTimeWaitChanged.emit(self.time_wait_spinbox.value())
+            lambda: self.sigParameterChanged.emit('time_wait', self.time_wait_spinbox.value())
         )
         self.number_scans_spinbox.editingFinished.connect(
-            lambda: self.sigNumberScansChanged.emit(self.number_scans_spinbox.value())
+            lambda: self.sigParameterChanged.emit('number_scans', self.number_scans_spinbox.value())
         )
-        self.shuffle_x_checkbox.toggled.connect(self.sigShuffleXChanged)
+        self.shuffle_x_checkbox.toggled.connect(
+            lambda state: self.sigParameterChanged.emit('shuffle_x', state)
+        )
 
     # ── Internal slots ────────────────────────────────────────────────────────
 
@@ -167,11 +157,11 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
 
     @QtCore.Slot()
     def _emit_x_range(self):
-        self.sigXRangeChanged.emit(
+        self.sigParameterChanged.emit('x_range', (
             self.x_start_spinbox.value(),
             self.x_end_spinbox.value(),
-            self.x_steps_spinbox.value(),
-        )
+            self.x_steps_spinbox.value()
+        ))
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -253,6 +243,25 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
             self._static_param_widgets[label] = widget
             self._form.addRow(f'{label}:', widget)
 
+    def update_static_set_parameters(self,params):
+        for label, value in params.items():
+            if f'{self.device_combo.currentText()}/' in label:
+                device,label = label.split('/')
+                if label in self._static_param_widgets:
+                    widget = self._static_param_widgets[label]
+                    widget.blockSignals(True)
+                    if type(widget) is ScienDSpinBox:
+                        widget.setValue(value)
+                    elif type(widget) is QtWidgets.QComboBox:
+                        widget.setCurrentText(value)
+                    else:
+                        widget.blockSignals(False)
+                        raise RuntimeError('Unexpected widget type in update_static_set_parameters, check code:',label,type(widget))
+
+                    widget.blockSignals(False)
+                
+
+
     def set_device_list(self, devices):
         """
         Populate the device combo box.
@@ -270,6 +279,14 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         if idx >= 0:
             self.device_combo.setCurrentIndex(idx)
         self.device_combo.blockSignals(False)
+
+    def set_current_device(self,device):
+        self.device_combo.blockSignals(True)
+        idx = self.device_combo.findText(device)
+        if idx>=0:  #returns -1 if not found
+            self.device_combo.setCurrentIndex(idx)
+        self.device_combo.blockSignals(False)
+
 
     def set_scan_parameters(self, params):
         """
@@ -313,6 +330,8 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
             self.shuffle_x_checkbox.blockSignals(True)
             self.shuffle_x_checkbox.setChecked(bool(params['shuffle_x']))
             self.shuffle_x_checkbox.blockSignals(False)
+
+        self.update_static_set_parameters(params)  #This handles parsing and finding the appropriate ones.
 
     def set_enabled(self, enabled):
         """Enable or disable all parameter editing widgets."""

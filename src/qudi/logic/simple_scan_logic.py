@@ -86,8 +86,9 @@ class SimpleScanLogic(LogicBase):
     _sigNextLine = QtCore.Signal()
     _sigNextPoint = QtCore.Signal()
 
-    # Update signals, e.g. for GUI module
+    # Update signals, e.g. to send updates to GUI module
     sigScanParametersUpdated = QtCore.Signal(dict)
+    sigDeviceUpdated = QtCore.Signal(str)
     sigScanStateUpdated = QtCore.Signal(bool)  #True when running, False when not
     sigScanDataUpdated = QtCore.Signal()
     sigScanComplete = QtCore.Signal(bool)   #True if successful, False if unsucessful
@@ -529,6 +530,7 @@ class SimpleScanLogic(LogicBase):
         #print("setting device to",value)
         if value in self.device_dict.keys():
             self._device_select = value
+            self.sigDeviceUpdated.emit(value)
         else:
             self.log.error(f'Invalid device, {value} not in device_dict')
 
@@ -596,7 +598,22 @@ class SimpleScanLogic(LogicBase):
         self._shuffle_x = value
         self.sigScanParametersUpdated.emit({'shuffle_x' : value})
 
-    
+    @QtCore.Slot()
+    def set_static_set_parameter_value(self,device,label,value):
+        self.device_dict[device].update_static_set_parameter_value(label,value)
+        self.sigScanParametersUpdated.emit({f'{device}/{label}' : value})
+
+    @QtCore.Slot()
+    def set_scan_parameter_value(self,label,value):
+        if f'{self.scan_device}/' in label:
+            self.set_static_set_parameter_value(self.scan_device,label,value)
+        else:
+            if label in ['x_range','number_scans','time_per','time_wait','shuffle_x']:
+                setattr(self,label,value)
+            else:
+                raise ValueError('Unexpected label request to be set:',label)
+
+
     @QtCore.Slot()
     def start_scan(self):
         """ Starting a scan.        

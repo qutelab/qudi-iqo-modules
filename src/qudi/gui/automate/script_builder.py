@@ -16,6 +16,7 @@ from PySide6 import QtWidgets as qw
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 
+from qudi.util.mutex import RecursiveMutex, Mutex
 #Logic imports for automation functions
 from qudi.logic.scanning_probe_logic import ScanningProbeLogic
 from qudi.logic.scanning_optimize_logic import ScanningOptimizeLogic
@@ -23,8 +24,13 @@ from qudi.logic.scanning_data_logic import ScanningDataLogic
 from qudi.logic.spectrometer_logic import SpectrometerLogic
 from qudi.logic.simple_scan_logic import SimpleScanLogic
 
-from qudi.gui.automate.grid_maker import GridApp
+import importlib
+try:
+    importlib.reload(grid_maker)
+except NameError:
+    import qudi.gui.automate.grid_maker as grid_maker
 
+from time import sleep
 
 # ###
 # Example config, make sure to extend as new connectors are added:
@@ -43,7 +49,7 @@ from qudi.gui.automate.grid_maker import GridApp
 # ---------------------- FUNCTION CATALOG ----------------------
 class FunctionCatalog(QtCore.QObject):
     sigFuncComplete = QtCore.Signal(str)  #Emits log string when function completes, can be connected to log_result in ScriptBuilderGUI
-    sigInterrupt = QtCore.Signal()
+    _sigInterrupt = QtCore.Signal()  #This should only be used internally as it's globally disconnected regularly.
 
     def __init__(self, parent):  #Parent required to access logic modules
         super().__init__(parent)
@@ -51,8 +57,15 @@ class FunctionCatalog(QtCore.QObject):
         self.log=self.parent.log
         
         self.folder_path = None
-        self._func_running=False
+        self._func_running = False
+        self._finish_lock = Mutex()
         self.sigFuncComplete.connect(lambda _: setattr(self,'_func_running',False))
+
+    def finish(self,interrupt=False):  #Call interrupt, disconnect all signals then reinitialize.
+        if interrupt:
+            self._sigInterrupt.emit()
+        sleep(0.1)
+        self._func_running=False
 
     def _discover_functions(self):
         for name, connector in self.parent._connectors.items():
@@ -143,19 +156,28 @@ class FunctionCatalog(QtCore.QObject):
         self._start_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
         self.optimize_logic().start_optimize()
         self.optimize_logic().sigOptimizeStateChanged.connect(self.finish_optimize, Qt.QueuedConnection)
-        self.sigInterrupt.connect(self.optimize_logic().stop_optimize)
+        self._sigInterrupt.connect(lambda : self.finish_optimize(interrupted=True), Qt.QueuedConnection)
         
-        
-    def finish_optimize(self):
-        if (not self._func_running) or (self.optimize_logic().module_state() != 'idle'):  #state_change emits happen during intermediate steps, need to check if we're actually done
-            return
-        try:
-            self.optimize_logic().sigOptimizeStateChanged.disconnect(self.finish_optimize)
-            self.sigInterrupt.disconnect(self.optimize_logic().stop_optimize)
-        except:
-            pass  #Ignore if signal was already be disconnected, this seems to happen because the statechange emits two signals quickly before disconnect copmletes
-        final_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
-        self.sigFuncComplete.emit(f"Optimized from {self._start_position} to {final_position}")
+    def finish_optimize(self,state=None, pos=None, fit=None, interrupted=False):  #Slot needs to receive all objects from signal.
+        with self._finish_lock:
+            if self.optimize_logic().optimizer_running and not interrupted:
+                return  #Optimizer emits at end of each stage, only catch when complete.
+            if fit and state:
+                scanResult = True
+            else:  # There's no way to fully distinguish when a optimize is complete vs independently interrupted as the complete emits two signals, the second which matches interrupted.
+                scanResult = False
+            if not scanResult and interrupted is False:  # Irrelevant call, ignore.
+                return
+            try:
+                self.optimize_logic().sigOptimizeStateChanged.disconnect(self.finish_optimize)
+                self._sigInterrupt.disconnect()
+            except:
+                pass 
+            if interrupted:
+                self.optimize_logic().stop_optimize()
+                return
+            final_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
+            self.sigFuncComplete.emit(f"Optimized from {self._start_position} to {final_position}")
         
 
     @register(dep='spectrometer_logic', params={
@@ -176,24 +198,76 @@ class FunctionCatalog(QtCore.QObject):
             self.spectrometer_logic().number_background = number_spectra
             self.spectrometer_logic().run_get_background()
         self.spectrometer_logic().sig_acquisition_complete.connect(self.finish_record_spectrum, Qt.QueuedConnection)
-        self.sigInterrupt.connect(self.spectrometer_logic().stop)  #Tell interrupt signal how to stop function
-  
-    def finish_record_spectrum(self,data_type):
-        if (self.spectrometer_logic().acquisition_running) or (not self._func_running):
-            return  # State update signals will be emitted before finished.
-        try:
-            self.spectrometer_logic().sig_acquisition_complete.disconnect(self.finish_record_spectrum)
-            self.sigInterrupt.disconnect(self.spectrometer_logic().stop)
-        except: 
-            pass
-        if data_type=='spectrum':
-            self.spectrometer_logic().save_all_data(root_dir=self.folder_path,metadata=self._metadata)
-        elif data_type=='background':
-            self.spectrometer_logic().save_spectrum_data(background=True,root_dir=self.folder_path,metadata=self._metadata)
-        self.sigFuncComplete.emit(f"Recorded {self.spectrometer_logic().number_spectra} {data_type} "
-                                  f"at {self.spectrometer_logic().wavelength} nm "
-                                  f"with {self.spectrometer_logic().exposure_time} s exposure time")
+        self._sigInterrupt.connect(lambda : self.finish_record_spectrum(interrupted=True), Qt.QueuedConnection)
+    
+    def finish_record_spectrum(self,data_type=None, interrupted=False): 
+        #if (self.spectrometer_logic().acquisition_running):
+        #    return  # State update signals will be emitted before finished.
+        with self._finish_lock:
+            try:
+                self.spectrometer_logic().sig_acquisition_complete.disconnect(self.finish_record_spectrum)
+                self._sigInterrupt.disconnect()
+            except: 
+                pass
+            if interrupted:
+                self.spectrometer_logic().stop()
+                return
+            if data_type=='spectrum':
+                self.spectrometer_logic().save_all_data(root_dir=self.folder_path,metadata=self._metadata)
+            elif data_type=='background':
+                self.spectrometer_logic().save_spectrum_data(background=True,root_dir=self.folder_path,metadata=self._metadata)
+            self.sigFuncComplete.emit(f"Recorded {self.spectrometer_logic().number_spectra} {data_type} "
+                                    f"at {self.spectrometer_logic().wavelength} nm "
+                                    f"with {self.spectrometer_logic().exposure_time} s exposure time")
+
+    @register(dep='simple_scan_logic', params={
+        "x_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
+        "x_end": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[1]},
+        "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
+        "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
+        "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
+        "shuffle_x": {"type":bool, "default": lambda ctx: ctx.simple_scan_logic()._shuffle_x},
+        "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().odmrScanner._static_set_parameters['RF Power'][1]},
+    })
+    def record_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x, RF_power):
+        # Implementation of simple scan specifically using ODMR to control its specific parameters.
+        self.simple_scan_logic().scan_device = 'ODMR'
+        self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
+        self.simple_scan_logic().time_per = time_per
+        self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().number_scans = number_scans
+        self.simple_scan_logic().shuffle_x = shuffle_x
+        self.simple_scan_logic().set_static_set_parameter_value('ODMR','RF Power', RF_power)
         
+        self.simple_scan_logic().start_scan()
+        self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
+        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
+
+    @register(dep='simple_scan_logic', params={
+        "x_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
+        "x_end": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[1]},
+        "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
+        "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
+        "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
+        "shuffle_x": {"type":bool, "default": lambda ctx: ctx.simple_scan_logic()._shuffle_x},
+        "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedOdmrScanner._static_set_parameters['RF Power'][1]},
+    })
+    def record_Pulsed_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x, RF_power):
+        # Implementation of simple scan specifically using Pulsed ODMR to control its specific parameters.
+        self.simple_scan_logic().scan_device = 'Pulsed ODMR'
+        self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
+        self.simple_scan_logic().time_per = time_per
+        self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().number_scans = number_scans
+        self.simple_scan_logic().shuffle_x = shuffle_x
+        self.simple_scan_logic().set_static_set_parameter_value('Pulsed ODMR','RF Power', RF_power)
+        
+        self.simple_scan_logic().start_scan()
+        self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
+        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
+    
     
     @register(dep='simple_scan_logic', params={
         "scan_device": {"type": [str], "entries": lambda ctx: ctx.simple_scan_logic().device_dict, 
@@ -207,7 +281,7 @@ class FunctionCatalog(QtCore.QObject):
         "shuffle_x": {"type":bool, "default": lambda ctx: ctx.simple_scan_logic()._shuffle_x},
     })
     def record_scan(self, scan_device, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x):
-        # Implementation for recording generic v_scan. Logic will contain list of addressable devices.
+        # Implementation for recording generic scan. Logic will contain list of addressable devices.
         self.simple_scan_logic().scan_device = scan_device
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
@@ -217,19 +291,23 @@ class FunctionCatalog(QtCore.QObject):
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection)
-        self.sigInterrupt.connect(self.simple_scan_logic().stop_scan)  #Tell interrupt signal how to stop function
+        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)
 
-    def finish_record_scan(self, scan_success):
-        if scan_success:
+    def finish_record_scan(self, scan_success=False, interrupted=False):
+        with self._finish_lock:
             try:
-                self.sigInterrupt.disconnect(self.simple_scan_logic().stop_scan)
                 self.simple_scan_logic().sigScanComplete.disconnect(self.finish_record_scan)
+                self._sigInterrupt.disconnect()
             except: 
                 pass
-            self.simple_scan_logic().save_data(root_dir=self.folder_path, metadata=self._metadata)
-            self.sigFuncComplete.emit(f"Done scan: {self.simple_scan_logic().x_range}")
-        else:
-            self.sigFuncComplete.emit(f"Scan failed")
+            if interrupted:
+                self.simple_scan_logic().stop_scan()
+                return
+            if scan_success:
+                self.simple_scan_logic().save_data(root_dir=self.folder_path, metadata=self._metadata)
+                self.sigFuncComplete.emit(f"Done scan: {self.simple_scan_logic().x_range}")
+            else:
+                self.sigFuncComplete.emit(f"Scan failed")
 
     _loop_list = []  #Allow for nested loops
     @register(params={"loop_count": {"type": int, "default": 1}})
@@ -344,7 +422,7 @@ class ScriptBuilderGUI(GuiBase):
         #     }
         
         self._functionCatalog = FunctionCatalog(self)
-        self._grid_maker = GridApp(self)
+        self._grid_maker = grid_maker.GridApp(self)
         self._mw = ScriptBuilder(self)
 
     def on_activate(self):
@@ -354,16 +432,15 @@ class ScriptBuilderGUI(GuiBase):
             if logic_module not in module_manager:
                 self.log.warning(f'Module {logic_module} not found')
                 self._connectors[var_name]=None
-            elif not module_manager[logic_module].is_active:
+            else:
                 try:
-                    module_manager.activate_module(logic_module)
+                    if not module_manager[logic_module].is_active:
+                        module_manager.activate_module(logic_module)
                     getattr(self,var_name).connect(module_manager[logic_module].instance)
                     self._connectors[var_name]=getattr(self,var_name)
                 except Exception as e:
                     self.log.warning(f'Error loading module {logic_module}:\n{e}')
                     self._connectors[var_name]=None
-            else:
-                self._connectors[var_name]=getattr(self,var_name)
 
             if var_name == 'scanning_logic' and self._connectors[var_name] is None:
                 raise RuntimeError(f'Failed to load, script builder requires {logic_module}.')
@@ -380,9 +457,16 @@ class ScriptBuilderGUI(GuiBase):
 
         self.show()
     def on_deactivate(self):
+        self._mw.finish_script(interrupted=True)
+        self._mw.close()
+        self._grid_maker.close()
         for name,connector in self._connectors.items():
             if connector is not None:
                 connector.disconnect()
+
+        delattr(self,'_mw')
+        delattr(self,'_grid_maker')
+
 
     def show(self):
         self._mw.resize(1000, 600)
@@ -668,28 +752,26 @@ class ScriptBuilder(QMainWindow):
             self._current_script_idx = 0
             self._current_coord_idx += 1
 
-        
 
 
     def finish_script(self,interrupted=False,error=None):
         if not self._running:
             return
-        
         try: 
             self.catalog.sigFuncComplete.disconnect(self.next_script_step)
         except:
             pass  #In case it was disconnected somehow already.
-        
         self._set_running(False)
         if interrupted:
-            self.catalog.sigInterrupt.emit()
+            self.catalog.finish(True)
             self.log_result("Script execution interrupted by user")
             QMessageBox.information(self, "Done", "Execution interrupted by user")
         elif error is not None:
-            self.catalog.sigInterrupt.emit()
+            self.catalog.finish(True)
             self.log_result(f"Script execution failed due to error: {error}")
             QMessageBox.information(self, f"Script execution failed due to error:", "{error}")
         else:
+            self.catalog.finish(False)
             self.log_result("Script execution complete")
             QMessageBox.information(self, "Done", "Execution complete")
 
