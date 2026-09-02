@@ -1,0 +1,28 @@
+% inline -> Helps with organization
+% $var=num(n,u,m, ) -> Assigns a value to $var that can be used throughout
+% TIME CHANNELS PULSE_TYPE(AMP, REPS) RECEIVE SEND IQ_PHASE
+% Current pulse types: delay, pulse, varPulse
+% delay -> No output
+% pulse -> Output with given amplitude
+% TIME CHANNELS varPulse -> Used in simpleScan TIME is a var to be modified
+
+-inline: |
+    $mwWaitTime=50n
+    $laserWaitTime=4u
+    $laserOnTime=3u
+
+    $mwAmp=1
+    $tPulse=1579n
+
+-inline: | #first 4 us
+    4u d_ch1 pulse($mwAmp) 0 0 0
+    2u d_ch2 delay($mwAmp) 0 1 0
+    2u d_ch2 pulse($mwAmp) 1 2 0
+    
+-inline: | # IQ pulses
+    $tPulse IQ pulse($mwAmp) 2 3 0
+    $mwWaitTime IQ delay($mwAmp) 3 4 0
+    
+-inline: | # Post Pulse
+    $laserOnTime d_ch1 pulse($mwAmp) 4 0 0
+    1u d_ch3 pulse($mwAmp) 4 0 0
