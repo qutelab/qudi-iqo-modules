@@ -73,6 +73,7 @@ class FiniteSamplingInputDummy(FiniteSamplingInputInterface):
         self.__start_time = 0.0
         self.__returned_samples = 0
         self.__simulated_samples = None
+        self._gate_on_external_clock = False  ##Dummy var
 
     def on_activate(self):
         # Create constraints object and perform sanity/type checking
@@ -107,7 +108,13 @@ class FiniteSamplingInputDummy(FiniteSamplingInputInterface):
 
     @property
     def active_channels(self):
-        return self._active_channels
+        if self._gate_on_external_clock:
+            chans = list(self._active_channels)
+            chans.sort()
+            ch1 = chans[0]
+            return frozenset([ch1+'-C1',ch1+'-C2',*chans[1:]])
+        else:
+            return self._active_channels
 
     @property
     def sample_rate(self):
@@ -226,7 +233,7 @@ class FiniteSamplingInputDummy(FiniteSamplingInputInterface):
     def __simulate_random(self, length):
         channels = self._constraints.channel_names
         self.__simulated_samples = {
-            ch: np.random.rand(length) for ch in channels if ch in self._active_channels
+            ch: np.random.rand(length) for ch in self.active_channels
         }
 
     def __simulate_odmr(self, length):

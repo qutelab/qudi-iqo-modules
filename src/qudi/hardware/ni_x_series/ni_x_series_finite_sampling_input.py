@@ -129,8 +129,6 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
         self._sample_rate = -1 #Initialized below
         self._frame_size = 1
         self._constraints = None
-        self.sample_on_external_clock = self._sample_on_external_clock  # Make instance variable
-        self.gate_on_external_clock = self._gate_on_external_clock
 
 
 
@@ -243,9 +241,9 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.set_external_clock(False,False)
         else:
             #Self-check inputs
-            self.set_external_clock(sample=self.sample_on_external_clock, gate=self.gate_on_external_clock)
+            self.set_external_clock(sample=self._sample_on_external_clock, gate=self._gate_on_external_clock)
 
-        if self.sample_on_external_clock and (self._sample_rate==-1):
+        if self._sample_on_external_clock and (self._sample_rate==-1):
             if self._external_sample_clock_frequency is not None:
                 self._sample_rate = float(self._external_sample_clock_frequency)
             else:
@@ -254,21 +252,10 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self._sample_rate = 100
 
         self.set_active_channels(digital_sources.union(analog_sources))
-
-        digital_channels_C = [] # List of channels including channel:clock pairings.
-        for ch in self.__active_channels['di_channels']:
-            if ch in self._external_sample_clock_source:
-                source = self._external_sample_clock_source[ch]
-                if type(source)==list:
-                    digital_channels_C.extend([f'{ch}-{chS}' for chS in source])
-                else:
-                    digital_channels_C.append(f'{ch}-{source}')
-            else:
-                digital_channels_C.append(ch)
-        self.digital_channels_C = frozenset(digital_channels_C)
+    
 
         # Check if all input channels fit in the device
-        if self.sample_on_external_clock:
+        if self._sample_on_external_clock:
             max_digital = 4
         else:
             max_digital = 3
@@ -297,7 +284,22 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
 
     @property
     def active_channels(self):
-        return self.__active_channels['di_channels'].union(self.__active_channels['ai_channels'])
+        return self.digital_channels_C.union(self.__active_channels['ai_channels'])
+
+
+    @property
+    def digital_channels_C(self):
+        digital_channels_C = []
+        for ch in self.__active_channels['di_channels']:
+            if (ch in self._external_sample_clock_source) and self._gate_on_external_clock:
+                source = self._external_sample_clock_source[ch]
+                if type(source)==list:
+                    digital_channels_C.extend([f'{ch}-{chS}' for chS in source])
+                else:
+                    digital_channels_C.append(f'{ch}-{source}')
+            else:
+                digital_channels_C.append(ch)
+        return frozenset(digital_channels_C)
 
     @property
     def sample_rate(self):
@@ -383,8 +385,8 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 self.log.error('Attempted to enable external clock, but no external_sample_clock_source set in config')
                 return 1
 
-        self.sample_on_external_clock = sample
-        self.gate_on_external_clock = gate
+        self._sample_on_external_clock = sample
+        self._gate_on_external_clock = gate
 
 
 
@@ -431,7 +433,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 self.module_state.unlock()
                 raise
 
-        if not self.sample_on_external_clock:
+        if not self._sample_on_external_clock:
             try:
                 self._clk_task_handle.start()
             except ni.DaqError:
@@ -579,7 +581,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                            'before you close the previous one.')
             return -1
 
-        if (not self.sample_on_external_clock) or (len(self._external_sample_clock_source)==0):
+        if (not self._sample_on_external_clock) or (len(self._external_sample_clock_source)==0):
             # Try to find an available counter
             for src in self.__all_counters:
                 # Check if task by that name already exists
@@ -682,7 +684,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 chnl,gate_source = chnl.split('-')
                 gate_source = '/{0}/{1}'.format(self._device_name, gate_source)
                 gatePossible = True
-                if self.sample_on_external_clock:
+                if self._sample_on_external_clock:
                     clock_source = gate_source
                 else:
                     clock_source = self._clock_channel_term
@@ -716,7 +718,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                         ci_chan.ci_count_edges_count_reset_reset_cnt = 0
                         ci_chan.ci_count_edges_count_reset_active_edge = self._trigger_edge
 
-                    if self.gate_on_external_clock and gatePossible:
+                    if self._gate_on_external_clock and gatePossible:
                         # Pause trigger: count only while gate is high
                         task.triggers.pause_trigger.trig_type = ni.constants.TriggerType.DIGITAL_LEVEL
                         task.triggers.pause_trigger.dig_lvl_src = gate_source

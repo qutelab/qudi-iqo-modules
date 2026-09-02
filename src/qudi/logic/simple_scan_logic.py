@@ -63,10 +63,10 @@ class SimpleScanLogic(LogicBase):
     """
 
     # declare connectors
-    _laser = Connector(name='laser', interface=SimpleLaserInterface)
-    _microwave = Connector(name='microwave', interface=MicrowaveInterface)
     _data_scanner = Connector(name='data_scanner', interface=FiniteSamplingInputInterface)
-    _awg = Connector(name='awg', interface='SimpleAWGLogic')
+    _laser = Connector(name='laser', interface=SimpleLaserInterface, optional=True)
+    _microwave = Connector(name='microwave', interface=MicrowaveInterface, optional=True)
+    _awg = Connector(name='awg', interface='SimpleAWGLogic', optional=True)
 
     # declare config options
     _save_thumbnails = ConfigOption(name='save_thumbnails', default=True)
@@ -78,6 +78,7 @@ class SimpleScanLogic(LogicBase):
     _time_wait = StatusVar(default=0.1) #Time to wait at each step before counting
     _number_scans = StatusVar(default=1)
     _shuffle_x = StatusVar(default=False)
+    _device_settings_store = StatusVar(default={})
 
     _fit_configs = StatusVar(name='fit_configs', default=None)
 
@@ -85,8 +86,9 @@ class SimpleScanLogic(LogicBase):
     _sigNextLine = QtCore.Signal()
     _sigNextPoint = QtCore.Signal()
 
-    # Update signals, e.g. for GUI module
+    # Update signals, e.g. to send updates to GUI module
     sigScanParametersUpdated = QtCore.Signal(dict)
+    sigDeviceUpdated = QtCore.Signal(str)
     sigScanStateUpdated = QtCore.Signal(bool)  #True when running, False when not
     sigScanDataUpdated = QtCore.Signal()
     sigScanComplete = QtCore.Signal(bool)   #True if successful, False if unsucessful
@@ -121,7 +123,7 @@ class SimpleScanLogic(LogicBase):
         def __init__(self, name:str, x_setter:Callable, y_getter:Callable=None, len_y:int=None, 
                      data_labels:list[str]=None, data_units:list[str]=None, 
                      static_read_parameters:dict=dict(), static_set_parameters:dict=dict(),
-                     start_function:Callable=None, end_function:Callable=None):
+                     start_function:Callable=None, end_function:Callable=None, dependencies=None, parent=None):
             '''
             Build the connection to the scan device:
             name: the name that will be listed/logged
@@ -135,8 +137,10 @@ class SimpleScanLogic(LogicBase):
             static_set_parameters: Optional, dict of Label: (set function, default, unit) or (set function, default, unit, constraints) 
                  for any parameters that are static across the scan but need to be set at the start of the scan. If constraints provided,
                  use tuple for (min,max), list for specific choices. These will be included in  the data header and saved with the data.
+                 Defaults are only used the first time the function is loaded, later using the StatusVar saved from the last run.
             start_function: Optional, function that will be called at the start of the scan.
             end_function: Optional, function that will be called at the end of the scan.
+            dependencies: Optional, List of what modules are required for operation. str, e.g. 'laser' for _laser
             '''
             
             #Verify inputs
@@ -177,6 +181,21 @@ class SimpleScanLogic(LogicBase):
             self._end_function = end_function
             self._scanDevice_ = True  #Will be included in list of scan devices
             self._metadata = {}
+            self._dependencies = dependencies
+            self._parent = parent
+            if parent is None:
+                class x:  # Throwaway so the code below doesn't need extra checks.
+                    _device_settings_store = {}
+                self._parent = x()
+
+            if len(self._static_set_parameters)>0:
+                if self.name not in self._parent._device_settings_store:
+                    self._parent._device_settings_store[self.name] = {}
+                else:
+                    for label, val in self._static_set_parameters.items():
+                        if label in self._parent._device_settings_store[self.name]:
+                            #Update starting value from StatusVar
+                            self.update_static_set_parameter_value(label,self._parent._device_settings_store[self.name][label])
 
 
         def set_x(self,value):
@@ -199,12 +218,21 @@ class SimpleScanLogic(LogicBase):
         @property
         def len_y(self):
             return self._len_y
+
+        def update_static_set_parameter_value(self,label,value):
+            if label in self._static_set_parameters:
+                self._static_set_parameters[label] = (self._static_set_parameters[label][0], value, *self._static_set_parameters[label][2:])
+            else:
+                raise ValueError(f'Label {label} not found in {self.name} parameters')
+
         
         def start_scan(self, first_value=None, leave_x=False):
             if first_value is None and not leave_x:
                 raise ValueError('first_value must be provided if leave_x is False.')
             
             if len(self._static_set_parameters)>0:
+                if self.name not in self._parent._device_settings_store:
+                    self._parent._device_settings_store[self.name] = {}
                 for label, val in self._static_set_parameters.items():
                     if len(val)==3:
                         set_func, value, unit = val
@@ -222,8 +250,9 @@ class SimpleScanLogic(LogicBase):
                                 raise ValueError(f'Set parameter {label} to {value} not in list {constraint}')
                         else:
                             raise NotImplementedError(f'Constraint type {type(constraint)} not implemented.')
-                    print('Setting static parameter', label, 'to', value, unit)
+                    #print('Setting static parameter', label, 'to', value, unit)
                     set_func(value)
+                    self._parent._device_settings_store[self.name][label] = value
                     self._metadata[f'{label} ({unit})'] = value
 
             if self._start_function is not None:
@@ -306,8 +335,10 @@ class SimpleScanLogic(LogicBase):
         # static_set_parameters: Dict of Label: (set function, default_value, unit) for any parameters that are static across the scan
         # These will be included in the data header and saved with the data
         # (start/end)_function: Called at start and end of scan, e.g. power on/off if necessary.
+        # dependencies: Optional, List of what modules are required for operation. str of variable name e.g. '_laser'
         # Order of operations: Set all static_set_parameters, set to first scan value, call start_function, 
-        #                      read static_read_parameters, scan, then call end_function.
+        #                      read static_read_parameters, scan, then call end_function. 
+        # Any interruption will also call end_function.
         
         self.laserScanner = self.ScanDevice('Laser',
                 lambda x: self._laser().set_piezo_voltage(x),
@@ -318,6 +349,8 @@ class SimpleScanLogic(LogicBase):
                 static_set_parameters={'Laser Power': (self._laser().set_power, 1e-6, 'W')},
                 start_function=None,
                 end_function=None,
+                dependencies=['_laser'],
+                parent = self
         )
         
         #This ODMR version just scans frequency manually in CW mode.
@@ -330,21 +363,23 @@ class SimpleScanLogic(LogicBase):
                 static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm')},
                 start_function=lambda : (self._microwave().set_cw(), self._microwave().cw_on()),
                 end_function=lambda : self._microwave().cw_off(),
+                dependencies=['_microwave'],
+                parent = self
         )
 
         #This ODMR version scans frequency manually in Pulsed mode.
         #Set up channels for ratio
-        try:
-            self._scanner_channels = list(self._data_scanner().digital_channels_C)
-        except:  # In case special channel-source list hasn't been created.
-            self._scanner_channels = list(self._data_scanner().active_channels)
-        self._scanner_channels.sort()
-        self._pulsed_numerator_channel = self._scanner_channels[0] #Default
-        if len(self._scanner_channels)>1:
-            self._pulsed_denominator_channel = self._scanner_channels[1] #Default
+        clockO = self._data_scanner()._gate_on_external_clock
+        self._data_scanner()._gate_on_external_clock = True  #For retrieving gated channel list
+        scanner_channels_G = list(self._data_scanner().active_channels)
+        self._data_scanner()._gate_on_external_clock = clockO  #Reset
+        scanner_channels_G.sort()
+        self._pulsed_numerator_channel = scanner_channels_G[0] #Default
+        if len(scanner_channels_G)>1:
+            self._pulsed_denominator_channel = scanner_channels_G[1] #Default
         else:
-            self._pulsed_denominator_channel = self._scanner_channels[0] #Default
-        #print('Scanner Channels',self._scanner_channels)
+            self._pulsed_denominator_channel = scanner_channels_G[0] #Default
+        #print('Scanner Channels',scanner_channels_G)
 
         def _pulsed_ODMR_getY(self):
             # Get ratio of digital channels as selected
@@ -358,20 +393,22 @@ class SimpleScanLogic(LogicBase):
                 return currentPoint[numIdx]/currentPoint[denIdx]
 
         def _pulsed_start_scan(self):
-            self._pulsed_initialGate = self._data_scanner().gate_on_external_clock
-            self._data_scanner().gate_on_external_clock = True
+            self._pulsed_initialGate = self._data_scanner()._gate_on_external_clock
+            self._data_scanner()._gate_on_external_clock = True
             if self._microwave().cw_frequency < 400e6:
-                self._microwave().set_pulsed(frequency=4e8)
+                self._microwave().set_pulsed(frequency=1e8)
             else:
                 self._microwave().set_pulsed()
-            self._awg().start_output()
+            if self._awg() is not None:  #Just for dummy capability.
+                self._awg().start_output()
             self._microwave().cw_on()
 
         def _pulsed_end_scan(self):
-            self._data_scanner().gate_on_external_clock = self._pulsed_initialGate
-            del self._pulsed_initialGate
             self._microwave().cw_off()
-            self._awg().stop_output()
+            if self._awg() is not None:
+                self._awg().stop_output()
+            self._data_scanner()._gate_on_external_clock = self._pulsed_initialGate
+            del self._pulsed_initialGate
 
         self.pulsedOdmrScanner = self.ScanDevice('Pulsed ODMR',
                 lambda x: setattr(self._microwave(), 'cw_frequency', x),
@@ -381,11 +418,13 @@ class SimpleScanLogic(LogicBase):
                 static_read_parameters={},
                 static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
                                        'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
-                                                           self._pulsed_numerator_channel, '', self._scanner_channels),
+                                                           self._pulsed_numerator_channel, '', scanner_channels_G),
                                        'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
-                                                             self._pulsed_denominator_channel, '', self._scanner_channels),},
+                                                             self._pulsed_denominator_channel, '', scanner_channels_G),},
                 start_function=lambda : _pulsed_start_scan(self),
-                end_function=lambda : _pulsed_end_scan(self)
+                end_function=lambda : _pulsed_end_scan(self),
+                dependencies=['_awg','_microwave'],
+                parent = self
         )
         self.pulsedRabiScanner = self.ScanDevice('Rabi',
             lambda x: self._awg().set_pulse_time(x),
@@ -396,15 +435,31 @@ class SimpleScanLogic(LogicBase):
             static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
                                    'Frequency': (lambda frequency: setattr(self._microwave(), 'cw_frequency', frequency), 2.7e9, 'Hz'),
                                    'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
-                                                       self._pulsed_numerator_channel, '', self._scanner_channels),
+                                                       self._pulsed_numerator_channel, '', scanner_channels_G),
                                    'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
-                                                         self._pulsed_denominator_channel, '', self._scanner_channels),},
+                                                         self._pulsed_denominator_channel, '', scanner_channels_G),},
             start_function=lambda : _pulsed_start_scan(self),
-            end_function=lambda : _pulsed_end_scan(self)
+            end_function=lambda : _pulsed_end_scan(self),
+            dependencies=['_awg','_microwave'],
+            parent = self
         )
 
 
-        self.device_dict = {v.name: v for v in self.__dict__.values() if hasattr(v, '_scanDevice_')} # For populating list
+        self.device_dict = {} # For populating list
+        for v in self.__dict__.values():
+            if hasattr(v, '_scanDevice_'):
+                deps = v._dependencies
+                if deps is not None:
+                    if type(deps) is str:
+                        deps = [deps]
+                    for dep in deps:
+                        if not hasattr(self,dep):
+                            self.log.error(f'Device {v.name} has undeclared dependency: {dep}')
+                            continue  #Dependency not found
+                        if getattr(self,dep) is None:
+                            self.log.info(f'Device {v.name} missing dependency: {dep}')
+                            continue  #Dependency not found
+                self.device_dict[v.name] = v  
 
 
         # # Set up fit model and container
@@ -472,9 +527,10 @@ class SimpleScanLogic(LogicBase):
     
     @scan_device.setter
     def scan_device(self,value):
-        print("setting device to",value)
+        #print("setting device to",value)
         if value in self.device_dict.keys():
             self._device_select = value
+            self.sigDeviceUpdated.emit(value)
         else:
             self.log.error(f'Invalid device, {value} not in device_dict')
 
@@ -542,7 +598,22 @@ class SimpleScanLogic(LogicBase):
         self._shuffle_x = value
         self.sigScanParametersUpdated.emit({'shuffle_x' : value})
 
-    
+    @QtCore.Slot()
+    def set_static_set_parameter_value(self,device,label,value):
+        self.device_dict[device].update_static_set_parameter_value(label,value)
+        self.sigScanParametersUpdated.emit({f'{device}/{label}' : value})
+
+    @QtCore.Slot()
+    def set_scan_parameter_value(self,label,value):
+        if f'{self.scan_device}/' in label:
+            self.set_static_set_parameter_value(self.scan_device,label,value)
+        else:
+            if label in ['x_range','number_scans','time_per','time_wait','shuffle_x']:
+                setattr(self,label,value)
+            else:
+                raise ValueError('Unexpected label request to be set:',label)
+
+
     @QtCore.Slot()
     def start_scan(self):
         """ Starting a scan.        
@@ -558,24 +629,29 @@ class SimpleScanLogic(LogicBase):
                 return
 
             self.module_state.lock()
-            
-            scanner = self._data_scanner()
-            device = self.device_dict[self._device_select]
 
-            scanner.set_sample_rate(1/self._time_per)
-            scanner.set_frame_size(1)
+            try:
+                scanner = self._data_scanner()
+                device = self.device_dict[self._device_select]
 
-            self._x_data = np.linspace(*self.x_range)
+                scanner.set_sample_rate(1/self._time_per)
+                scanner.set_frame_size(1)
 
-            self.initialize_data()
+                self._x_data = np.linspace(*self.x_range)
 
-            device.start_scan(self._x_data[0])  # This will set any static parameters, set the device to the first x value, and start the device.
-            
-            self.sigScanDataUpdated.emit()
-            self.sigScanStateUpdated.emit(True)
+                device.start_scan(self._x_data[0])  # This will set any static parameters, set the device to the first x value, and start the device.
 
-            self._scan()  # Start the scanner loop.
+                self._scanner_channels = list(scanner.active_channels)
+                self.initialize_data()
 
+                
+                self.sigScanDataUpdated.emit()
+                self.sigScanStateUpdated.emit(True)
+
+                self._scan()  # Start the scanner loop.
+            except Exception as e:
+                self.stop_scan()  # Stop device, clear lock
+                self.log.error(f'Error while starting scan: {e}')
 
 
     #Button logic could be as follows Button 1: Start -> Stop -> Continue ; Button 2: Reset data (which sets button 1 back to start, only available if stopped/data is taken)
@@ -601,7 +677,10 @@ class SimpleScanLogic(LogicBase):
         """ Stop the scan.
         """
         with self._threadlock:
-            self.device_dict[self._device_select].end_scan()
+            try:
+                self.device_dict[self._device_select].end_scan()
+            except Exception as e:
+                self.log.error(f'Error stopping scan: {e}')
             if self.module_state() == 'locked':
                 self.module_state.unlock()
             self.sigScanStateUpdated.emit(False)
@@ -674,7 +753,7 @@ class SimpleScanLogic(LogicBase):
 
                 if self._point_counter>=len(self._x_data):
                     self.sigLineReady.emit(True)
-                    print('Done scanning line',self._line_counter)
+                    #print('Done scanning line',self._line_counter)
                     self._line_counter+=1
                     if self._line_counter>=self._number_scans:
                         self.sigScanComplete.emit(True)
@@ -687,8 +766,8 @@ class SimpleScanLogic(LogicBase):
                 self._sigAcquire.emit(self._time_wait)
                 
             except Exception as e:
-                self.module_state.unlock()
-                self.log.exception(f'Error while getting data point: {e}')
+                self.stop_scan()  #Stop device, clear lock
+                self.log.error(f'Error while getting data point: {e}')
                 #These can be used by other components to communicate an error has occured and no data is incoming.
                 self.sigDataPointReady.emit(False)
                 self.sigLineReady.emit(False)

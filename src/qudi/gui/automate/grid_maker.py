@@ -31,13 +31,15 @@ class GridApp(qw.QWidget):
         self.plot.addItem(self.img)
 
         self.scatter = pg.ScatterPlotItem(pen=None, brush='r', size=5)
-        self.scatter_select = pg.ScatterPlotItem(pen=None, brush='r', size=5)
+        self.scatter_select = pg.ScatterPlotItem(pen=None, brush=(173, 216, 230), size=5)
         self.scatter_done = pg.ScatterPlotItem(pen=None, brush='g', size=5)
         self.scatter_current = pg.ScatterPlotItem(pen=None, brush='y', size=5)
+        self.scatter_highlight = pg.ScatterPlotItem(pen=pg.mkPen('orange', width=2), brush=None, size=14, symbol='o')
         self.plot.addItem(self.scatter)
         self.plot.addItem(self.scatter_select)
         self.plot.addItem(self.scatter_done)
         self.plot.addItem(self.scatter_current)
+        self.plot.addItem(self.scatter_highlight)
         self._select_data = np.full((3,2),np.nan)
 
         # Crosshair
@@ -51,6 +53,16 @@ class GridApp(qw.QWidget):
 
         self.pick_mode = None
 
+        # Selection / manual-add state
+        self.select_mode = False
+        self.add_manual_mode = False
+        self.selected_indices = set()
+        self._drag_rect_item = None
+
+        # Hijack the viewbox drag event so a left-drag can rubber-band select points
+        self.vb = self.plot.plotItem.vb
+        self._default_drag_event = self.vb.mouseDragEvent
+        self.vb.mouseDragEvent = self._vb_mouse_drag_event
 
         
         inputLayout = qw.QGridLayout()
@@ -98,13 +110,24 @@ class GridApp(qw.QWidget):
         self.btn_update = qw.QPushButton("Update Grid")
         inputLayout.addWidget(self.btn_update,5,0)
 
-        
+        self.btn_select = qw.QPushButton("Select Points")
+        self.btn_select.setCheckable(True)
+        self.btn_delete_selected = qw.QPushButton("Delete Selected")
+        self.btn_add_manual = qw.QPushButton("Add Manual")
+        self.btn_add_manual.setCheckable(True)
+
+        inputLayout.addWidget(self.btn_select,6,0)
+        inputLayout.addWidget(self.btn_delete_selected,6,1)
+        inputLayout.addWidget(self.btn_add_manual,7,0)
 
         # Connections
         self.btn_update.clicked.connect(self.update_grid)
         self.btn_c1.clicked.connect(lambda: self.set_pick_mode(1))
         self.btn_c2.clicked.connect(lambda: self.set_pick_mode(2))
         self.btn_c3.clicked.connect(lambda: self.set_pick_mode(3))
+        self.btn_select.toggled.connect(self.toggle_select_mode)
+        self.btn_delete_selected.clicked.connect(self.delete_selected)
+        self.btn_add_manual.toggled.connect(self.toggle_add_manual_mode)
 
         #Defaults
         self.grid=None
@@ -138,22 +161,133 @@ class GridApp(qw.QWidget):
             self.hLine.setPos(mouse_point.y())
 
     def mouse_clicked(self, evt):
-        if self.pick_mode is None:
-            return
-
         pos = evt.scenePos()
         mouse_point = self.plot.plotItem.vb.mapSceneToView(pos)
-
         x, y = mouse_point.x(), mouse_point.y()
 
-        self.corners[self.pick_mode-1][0].setValue(x)
-        self.corners[self.pick_mode-1][1].setValue(y)
+        if self.pick_mode is not None:
+            self.corners[self.pick_mode-1][0].setValue(x)
+            self.corners[self.pick_mode-1][1].setValue(y)
 
-        self._select_data[self.pick_mode-1] = (x,y)
-        self.update_done()
-        self.scatter_select.setData(*self._select_data.T)
+            self._select_data[self.pick_mode-1] = (x,y)
+            self.update_done()
+            self.scatter_select.setData(*self._select_data.T)
 
-        self.pick_mode = None
+            self.pick_mode = None
+            return
+
+        if self.add_manual_mode:
+            self.add_manual_point(x, y)
+            return
+
+        if self.select_mode:
+            self.toggle_nearest_point_selection(x, y)
+            return
+
+    def toggle_select_mode(self, checked):
+        self.select_mode = checked
+        if checked:
+            self.add_manual_mode = False
+            self.btn_add_manual.setChecked(False)
+        else:
+            self.selected_indices = set()
+            self.update_selection_highlight()
+
+    def toggle_add_manual_mode(self, checked):
+        self.add_manual_mode = checked
+        if checked:
+            self.select_mode = False
+            self.btn_select.setChecked(False)
+            self.selected_indices = set()
+            self.update_selection_highlight()
+
+    def add_manual_point(self, x, y):
+        point = np.array([[x, y]])
+        if self.grid is None or len(self.grid) == 0:
+            self.grid = point
+            self.gridCR = []
+        else:
+            self.grid = np.vstack([self.grid, point])
+        self.gridCR.append(f'M{len(self.grid)-1}')
+        self.scatter.setData(self.grid[:, 0], self.grid[:, 1])
+        self.sig_grid_updated.emit([list(gI) for gI in self.grid], self.gridCR)
+
+    def toggle_nearest_point_selection(self, x, y):
+        if self.grid is None or len(self.grid) == 0:
+            return
+        xspan = float(np.ptp(self.grid[:, 0])) or 1.0
+        yspan = float(np.ptp(self.grid[:, 1])) or 1.0
+        threshold = 0.03 * max(xspan, yspan)
+        dists = np.hypot(self.grid[:, 0] - x, self.grid[:, 1] - y)
+        idx = int(np.argmin(dists))
+        if dists[idx] > threshold:
+            return
+        if idx in self.selected_indices:
+            self.selected_indices.discard(idx)
+        else:
+            self.selected_indices.add(idx)
+        self.update_selection_highlight()
+
+    def select_points_in_rect(self, p1, p2):
+        if self.grid is None or len(self.grid) == 0:
+            return
+        xmin, xmax = sorted((p1.x(), p2.x()))
+        ymin, ymax = sorted((p1.y(), p2.y()))
+        inside = np.where(
+            (self.grid[:, 0] >= xmin) & (self.grid[:, 0] <= xmax) &
+            (self.grid[:, 1] >= ymin) & (self.grid[:, 1] <= ymax)
+        )[0]
+        self.selected_indices = set(inside.tolist())
+        self.update_selection_highlight()
+
+    def update_selection_highlight(self):
+        if self.grid is None or not self.selected_indices:
+            self.scatter_highlight.setData([])
+            return
+        idx = sorted(self.selected_indices)
+        pts = self.grid[idx]
+        self.scatter_highlight.setData(pts[:, 0], pts[:, 1])
+
+    def delete_selected(self):
+        if self.grid is None or not self.selected_indices:
+            return
+        keep = [i for i in range(len(self.grid)) if i not in self.selected_indices]
+        self.grid = self.grid[keep]
+        self.gridCR = [self.gridCR[i] for i in keep]
+        self.selected_indices = set()
+        if len(self.grid):
+            self.scatter.setData(self.grid[:, 0], self.grid[:, 1])
+        else:
+            self.scatter.setData([])
+        self.update_selection_highlight()
+        self.sig_grid_updated.emit([list(gI) for gI in self.grid], self.gridCR)
+
+    def _vb_mouse_drag_event(self, ev, axis=None):
+        if not self.select_mode or ev.button() != QtCore.Qt.MouseButton.LeftButton:
+            self._default_drag_event(ev, axis=axis)
+            return
+
+        ev.accept()
+        start = self.vb.mapSceneToView(ev.buttonDownScenePos())
+        cur = self.vb.mapSceneToView(ev.scenePos())
+
+        if ev.isStart():
+            self._drag_rect_item = qw.QGraphicsRectItem()
+            self._drag_rect_item.setPen(pg.mkPen('y', width=1))
+            self.plot.addItem(self._drag_rect_item)
+
+        if self._drag_rect_item is not None:
+            rect = QtCore.QRectF(
+                QtCore.QPointF(min(start.x(), cur.x()), min(start.y(), cur.y())),
+                QtCore.QPointF(max(start.x(), cur.x()), max(start.y(), cur.y())),
+            )
+            self._drag_rect_item.setRect(rect)
+
+        if ev.isFinish():
+            self.select_points_in_rect(start, cur)
+            if self._drag_rect_item is not None:
+                self.plot.removeItem(self._drag_rect_item)
+                self._drag_rect_item = None
     
     
     def update_grid(self):
@@ -178,6 +312,8 @@ class GridApp(qw.QWidget):
                     self.gridCR.append(f'C{i}R{j}')
 
             self.grid = np.array(grid)
+            self.selected_indices = set()
+            self.update_selection_highlight()
             self.update_done()
             self.scatter.setData(self.grid[:, 0], self.grid[:, 1])
             self.scatter_select.setData([])
