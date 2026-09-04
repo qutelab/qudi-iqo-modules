@@ -45,7 +45,7 @@ class SimpleAWGGui(GuiBase):
 
         #These are default in case no sequence or blocks are saved
         self.pulse_blocks = {'idle': np.zeros(10)}
-        self.sequences = {'': np.array([]), 'Clear': [{'block': 'idle', 'channels': ['a_ch1', 'a_ch2', 'a_ch3', 'a_ch4', 'd_ch1', 'd_ch2', 'd_ch3', 'd_ch4', 'd_ch5', 'd_ch6'], 'repetitions': 1, 'Send Trig': 1, 'Recieve Trig': 0}]}
+        self.sequences = {'': np.array([]), 'Clear': [{'block': 'idle', 'channels': ['a_ch1', 'a_ch2', 'a_ch3', 'a_ch4', 'd_ch1', 'd_ch2', 'd_ch3', 'd_ch4', 'd_ch5', 'd_ch6'], 'repetitions': 1, 'Send Trig': 1, 'Receive Trig': 0}]}
 
         #Try to load existing sequences and pulse blocks
         try:
@@ -610,6 +610,7 @@ class SimpleAWGGui(GuiBase):
         iter_label = QLabel("1 Iteration Step:")
         self.steps_input = QSpinBox()
         self.steps_input.setRange(1, 1000000)
+        self.steps_input.setValue(100)
         
         iteration_manage_layout.addWidget(iter_label)
         iteration_manage_layout.addWidget(self.steps_input)
@@ -627,7 +628,7 @@ class SimpleAWGGui(GuiBase):
             "Channels",
             "Repetitions",
             "Send Trig",
-            "Recieve Trig",
+            "Receive Trig",
             "IQ Phase"
         ])
         
@@ -643,6 +644,8 @@ class SimpleAWGGui(GuiBase):
         write_sequence_btn = QPushButton("Write Sequence")
         save_sequence_btn = QPushButton("Save Sequence")
         load_sequence_btn = QPushButton("Load Sequence")
+        
+        load_file_btn = QPushButton("Load Sequence from File")
 
         current_indicator = QHBoxLayout()
         current_label = QLabel("Current Sequence:")
@@ -659,6 +662,7 @@ class SimpleAWGGui(GuiBase):
         write_sequence_btn.clicked.connect(self.write_sequence)
         save_sequence_btn.clicked.connect(self.save_sequence)
         load_sequence_btn.clicked.connect(self.load_sequence)
+        load_file_btn.clicked.connect(self.load_sequence_file)
 
         self.new_sequence_name = QLineEdit() 
 
@@ -670,9 +674,10 @@ class SimpleAWGGui(GuiBase):
         standard_btns.addWidget(write_sequence_btn)
         standard_btns.addWidget(save_sequence_btn)
         standard_btns.addWidget(self.new_sequence_name)
-        sequence_button_layout.addRow(standard_btns)
         
+        sequence_button_layout.addRow(standard_btns)
         sequence_button_layout.addRow(current_indicator)
+        sequence_button_layout.addRow(load_file_btn)
 
         sequence_layout.addWidget(self.sequence_table)
         sequence_layout.addLayout(sequence_button_layout)
@@ -702,6 +707,7 @@ class SimpleAWGGui(GuiBase):
             channel = self.channel_combo.currentText()
 
             self._logic.load_waveform_file(filepath, channel)
+            
 
     # -------------------------------------------------
     # Update plot
@@ -717,7 +723,6 @@ class SimpleAWGGui(GuiBase):
 
     def refresh_plot(self):
         """ Clears plots updates plots according to the currently selected channel """
-
         self.plot_widget.clear()
         self.pulse_plot.clear()
     
@@ -727,7 +732,7 @@ class SimpleAWGGui(GuiBase):
         if hasattr(self, 'block_name_edit'):
             selected_block = self.block_name_edit.text()
         
-        max_length = 1000000 # For preformance reasons
+        max_length = 10000000 # For preformance reasons
     
         if channel is None:
             channel = self.channel_combo.currentText()
@@ -746,13 +751,14 @@ class SimpleAWGGui(GuiBase):
         
         if selected_block not in self.pulse_blocks:
             if len(self.plot_buffer) > 0:
+                self.plot_buffer = self.plot_buffer[:min(len(self.plot_buffer), max_length)]
                 self.pulse_plot.plot(self.plot_buffer)
             else:
                 self.pulse_plot.clear()
-        else:
-            compiler = PulseCompiler(None, self.pulse_blocks, self._logic, self._logic.awg().get_sample_rate() )
-            temp_plot = compiler.compile_pulse(self.create_pulse())
-            self.pulse_plot.plot(temp_plot)
+        # else:
+            # compiler = PulseCompiler(None, self.pulse_blocks, self._logic, self._logic.awg().get_sample_rate() )
+            # temp_plot = compiler.compile_pulse(self.create_pulse())
+            # self.pulse_plot.plot(temp_plot)
 
         #Set range to reasonable bounds
         self.plot_widget.getViewBox().autoRange()
@@ -1030,7 +1036,7 @@ class SimpleAWGGui(GuiBase):
         self.sequence_table.setCellWidget(row, 2, reps)
     
         #
-        # send and recieve
+        # send and receive
         #
         send_flag = QSpinBox()
         send_flag.setRange(0, 9999)
@@ -1075,7 +1081,7 @@ class SimpleAWGGui(GuiBase):
                 "channels": channels,
                 "repetitions": reps,
                 "Send Trig": send_flag,
-                "Recieve Trig": recieve_flag,
+                "Receive Trig": recieve_flag,
                 "IQ Phase": iq_phase
             })
     
@@ -1115,6 +1121,31 @@ class SimpleAWGGui(GuiBase):
         #     self.start_output()
         #     time.sleep(1)
 
+    def load_sequence_file(self):
+        """Used to load and compile pulse sequence from file"""
+   
+        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self._main_window,
+            'Load Sequence',
+            '',
+            'SEQ Files (*.seq)'
+        )
+
+        if filepath:
+            sequence_name = self.new_sequence_name.text()
+            sequence = self._logic.read_sequence_file(filepath)
+            self.sequences[sequence_name] = sequence
+            
+            waveforms = {}
+
+            steps_per_iter = self.steps_input.value()
+            compiler = PulseCompiler(sequence, self.pulse_blocks, self._logic, steps_per_iter=steps_per_iter)
+            waveforms = compiler.compile()
+
+            for channel in waveforms.keys():
+                self._logic.load_waveform_file(np.array(waveforms[channel]), channel)
+                
+            self._logic.update_pulses_and_sequences(sequence, self.pulse_blocks)
 
     def save_sequence(self):
         """ Saves the sequence to target file """
@@ -1179,7 +1210,7 @@ class SimpleAWGGui(GuiBase):
     
         self.sequence_table.setColumnCount(6)
         self.sequence_table.setHorizontalHeaderLabels([
-            "Block", "Channels", "Reps", "Send Trig", "Recieve Trig", "IQ Phase"
+            "Block", "Channels", "Reps", "Send Trig", "Receive Trig", "IQ Phase"
         ])
     
         # rebuild rows
@@ -1212,7 +1243,8 @@ class SimpleAWGGui(GuiBase):
             send_flag.setMinimum(0)
 
             recieve_flag = QSpinBox()
-            recieve_flag.setValue(step["Recieve Trig"])
+            print(step)
+            recieve_flag.setValue(step["Receive Trig"])
             recieve_flag.setMinimum(0)
     
             self.sequence_table.setCellWidget(row, 2, reps)
