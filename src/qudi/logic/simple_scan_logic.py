@@ -275,7 +275,7 @@ class SimpleScanLogic(LogicBase):
 
     class ScanWorker(QtCore.QObject):  # Connect scan device to this worker, and send it to a separate thread to allow contiuous data status polling without UI blocking.
         from time import sleep  #This is a separate thread, so sleep is okay here.
-        sigWorkerFinished = QtCore.Signal()
+        sigWorkerFinished = QtCore.Signal(object)
 
         def __init__(self,scanner):
             super().__init__()
@@ -286,10 +286,16 @@ class SimpleScanLogic(LogicBase):
         def acquire_frame(self,wait_time=0):
             self._running = True
             self.sleep(wait_time)
-            self.result = self.scanner().acquire_frame()
-            self._running = False
-            self.sigWorkerFinished.emit()
-
+            try:
+                #self.result = self.scanner().get_buffered_samples(self.scanner().frame_size)
+                self.result = self.scanner().acquire_frame()
+                self._running = False
+                self.sigWorkerFinished.emit(None)
+            except Exception as e:
+                self.result=None
+                self._running = False
+                self.sigWorkerFinished.emit(e)
+            
             
     #Begin SimpleScanLogic main code
     def __init__(self, *args, **kwargs):
@@ -407,8 +413,12 @@ class SimpleScanLogic(LogicBase):
             self._microwave().cw_off()
             if self._awg() is not None:
                 self._awg().stop_output()
-            self._data_scanner()._gate_on_external_clock = self._pulsed_initialGate
-            del self._pulsed_initialGate
+            try:
+                self._data_scanner()._gate_on_external_clock = self._pulsed_initialGate
+                del self._pulsed_initialGate
+            except:
+                pass  #Likely the start was never run
+            
 
         self.pulsedOdmrScanner = self.ScanDevice('Pulsed ODMR',
                 lambda x: setattr(self._microwave(), 'cw_frequency', x),
@@ -634,8 +644,12 @@ class SimpleScanLogic(LogicBase):
                 scanner = self._data_scanner()
                 device = self.device_dict[self._device_select]
 
-                scanner.set_sample_rate(1/self._time_per)
-                scanner.set_frame_size(1)
+                if self._time_per >1:  #DAQ has min rate of 1 Hz, so collect multiple and average.
+                    scanner.set_sample_rate(100/self._time_per)
+                    scanner.set_frame_size(100)
+                else:
+                    scanner.set_sample_rate(1/self._time_per)
+                    scanner.set_frame_size(1)
 
                 self._x_data = np.linspace(*self.x_range)
 
@@ -644,7 +658,6 @@ class SimpleScanLogic(LogicBase):
                 self._scanner_channels = list(scanner.active_channels)
                 self.initialize_data()
 
-                
                 self.sigScanDataUpdated.emit()
                 self.sigScanStateUpdated.emit(True)
 
@@ -677,12 +690,13 @@ class SimpleScanLogic(LogicBase):
         """ Stop the scan.
         """
         with self._threadlock:
+            if self.module_state() == 'locked':
+                self.module_state.unlock()  #Stop scanning before turning off device.
             try:
                 self.device_dict[self._device_select].end_scan()
             except Exception as e:
                 self.log.error(f'Error stopping scan: {e}')
-            if self.module_state() == 'locked':
-                self.module_state.unlock()
+            
             self.sigScanStateUpdated.emit(False)
 
     @QtCore.Slot()
@@ -703,9 +717,13 @@ class SimpleScanLogic(LogicBase):
 
     
     @QtCore.Slot()
-    def _on_worker_finished(self):
+    def _on_worker_finished(self, error=None):
         """Handle worker completion in logic thread and continue scan loop."""
-        self._scan(True)
+        if error is None:
+            self._scan(True)
+        else:
+            self.log.error(f'Error acquiring scan frame: {error}')
+            self.stop_scan()
 
     @QtCore.Slot(bool)
     def _scan(self, point_ready=False):
@@ -725,7 +743,7 @@ class SimpleScanLogic(LogicBase):
                 # _raw_data is initialized in start_scan, so we just need to populate it here.
                 # Scanner data first, though it's after device data in the raw_data
                 dev_y_len = device.len_y
-                res = [self._scan_worker.result[channel][0] for channel in self._scanner_channels]
+                res = [np.mean(self._scan_worker.result[channel]) for channel in self._scanner_channels]    
                 self._raw_data[self._line_counter][self._point_order[self._point_counter]][1+dev_y_len:] = res
 
                 #Device data

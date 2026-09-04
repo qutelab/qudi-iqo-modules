@@ -90,22 +90,24 @@ class AWG_DN2(PulserInterface):
         return
 
     def turn_on(self):
-        
-        #connection_attempts = 5
-        #for i in range(connection_attempts):
-        devices = spcm.Netbox.discover()
-        print(devices)
-        for device in devices.keys():
-        
-            if not device == self.ip_address:
-                continue
-
-            self.awg = spcm.Netbox(card_identifiers=devices[device], find_sync=True)
-        
+        self.awg = None
+        try:  #Manual connection attempt first, fastest.
+            # TODO: config entry of number of cards (here 2)
+            card_identifiers = [f'TCPIP::{self.ip_address}::inst0::INSTR',f'TCPIP::{self.ip_address}::inst1::INSTR']
+            self.awg = spcm.Netbox(card_identifiers=card_identifiers, find_sync=True)
             if self.awg is None:
-                self.log_warning('Netbox not connected')
-            else:
-                self.connected = True
+                raise
+        except:
+            devices = spcm.Netbox.discover()
+            print(devices)
+            for device in devices.keys():
+                self.log.warning(f'Could not find device at config IP, discovered device: {device}')
+                self.awg = spcm.Netbox(card_identifiers=devices[device], find_sync=True)
+        
+        if self.awg is None:
+            self.log.error('Netbox not connected')
+        else:
+            self.connected = True
                     
         #if not self.connected:
         #    return

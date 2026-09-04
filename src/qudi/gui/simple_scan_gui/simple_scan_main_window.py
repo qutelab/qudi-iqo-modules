@@ -117,7 +117,7 @@ class SimpleScanMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
         self.save_nametag_lineedit.setMinimumWidth(
-            QtGui.QFontMetrics(ScienDSpinBox().font()).width(40 * ' ')
+            QtGui.QFontMetrics(ScienDSpinBox().font()).width(120 * ' ')
         )
         self.save_nametag_lineedit.setPlaceholderText('nametag (optional)…')
         self.save_nametag_lineedit.setToolTip('Optional nametag appended to the saved file name')

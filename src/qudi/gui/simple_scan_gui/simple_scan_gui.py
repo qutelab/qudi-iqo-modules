@@ -168,6 +168,7 @@ class SimpleScanGui(GuiBase):
             self._device_changed, QtCore.Qt.ConnectionType.QueuedConnection
         )
         dw.sigParameterChanged.connect(self._change_scan_parameters, QtCore.Qt.ConnectionType.QueuedConnection)
+        dw.sigStaticSetParamChanged.connect(self._static_set_param_changed, QtCore.Qt.ConnectionType.QueuedConnection)
 
         # Re-render plots when the user changes the channel or normalise selectors
         self._mw.plot_widget.x_channel_combo.currentIndexChanged.connect(
@@ -188,7 +189,7 @@ class SimpleScanGui(GuiBase):
 
         dw = self._mw.control_dockwidget
         dw.sigDeviceChanged.disconnect(self._device_changed)
-        dw.sigParameterChanged.disconnect(self._update_scan_parameters)
+        dw.sigParameterChanged.disconnect(self._change_scan_parameters)
         dw.sigStaticSetParamChanged.disconnect(self._static_set_param_changed)
 
         self._mw.plot_widget.x_channel_combo.currentIndexChanged.disconnect()
@@ -428,4 +429,4 @@ class SimpleScanGui(GuiBase):
     def _static_set_param_changed(self, label, value):
         """Write the new value back into the logic's static_set_parameters dict."""
         logic = self._simple_scan_logic()
-        logic.update_static_set_parameter_value(logic.scan_device, label, value)
+        logic.set_static_set_parameter_value(logic.scan_device, label, value)
