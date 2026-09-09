@@ -119,6 +119,7 @@ class MicrowaveSRSSG(MicrowaveInterface):
         self._scan_power = self._constraints.min_power
         self._scan_sample_rate = self._constraints.max_sample_rate
         self._in_cw_mode = True
+        self._pulse_enabled = False
 
     def on_deactivate(self):
         """ Cleanup performed during deactivation of the module."""
@@ -233,8 +234,11 @@ class MicrowaveSRSSG(MicrowaveInterface):
                 self._write('STYP 0')
             if frequency is not None:
                 self._write(f'FREQ {frequency:e}')
+            elif self.cw_frequency<1e6:
+                self.cw_frequency=1e6  #Minimum frequency for RF output
             if power is not None:
                 self._write(f'AMPR {power:f}')
+            self._pulse_enabled=False
                 
     def set_pulsed(self, frequency=None, power=None):
         """Configure the pulsed microwave output.
@@ -252,12 +256,17 @@ class MicrowaveSRSSG(MicrowaveInterface):
                 # self._write('STYP 0')
             if frequency is not None:
                 self._write(f'FREQ {frequency:e}')
+            elif self.cw_frequency<1e6:
+                self.cw_frequency=1e6  #Minimum frequency for RF output
             if power is not None:
                 self._write(f'AMPR {power:f}')
             
             self._write(f"TYPE 7")
             self._write(f"QFNC 5")
             self._write(f"MODL 1")
+
+            self._pulse_enabled=True
+
 
     def configure_scan(self, power, frequencies, mode, sample_rate):
         """
@@ -280,7 +289,7 @@ class MicrowaveSRSSG(MicrowaveInterface):
         """
         with self._thread_lock:
             self._write('ENBR 0')
-            while self._output_active():
+            while self.output_active:
                 time.sleep(0.1)
             self.module_state.unlock()
 
@@ -445,11 +454,16 @@ class MicrowaveSRSSG(MicrowaveInterface):
         """ Switches on any preconfigured microwave output.
         """
         self._write('ENBR 1')
-        while not self._output_active():
+        while not self.output_active:
             time.sleep(0.1)
 
-    def _output_active(self):
+    @property
+    def output_active(self):
         return bool(int(self._device.query('ENBR?').strip()))
+
+    @property
+    def modulation_active(self):
+        return bool(int(self._device.query('MODL?').strip()))
 
     ########################################################################################
     ########################################################################################

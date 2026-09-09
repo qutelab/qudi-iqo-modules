@@ -8,17 +8,21 @@ from qudi.core.connector import Connector
 
 from qudi.logic.pulsed.predefined_generate_methods.basic_predefined_methods import *
 from qudi.core.configoption import ConfigOption
+import qudi.util.paths as paths
 from qtpy.QtWidgets import *
 from qtpy.QtCore import *
+from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 
 from qudi.logic.simple_awg_logic import PulseCompiler
 
 import pickle
+import json
 
-import importlib
-import sys
+import os
+#import importlib
+#import sys
 import numpy as np
-import time
+
 
 class SimpleAWGGui(GuiBase):
     """
@@ -34,12 +38,16 @@ class SimpleAWGGui(GuiBase):
     simple_awg_gui:
         module.Class: 'simple_awg.simple_awg_gui.SimpleAWGGui'
         options:
-            save_path: 'C:\'
+            save_path: 'C:\\'  #Defaults to default_data_dir\\Pulses, e.g. USERDIR\\qudi\\Data\\Pulses
         connect:
             simple_awg_logic: 'simple_awg_logic'
+            microwave: microwave_dummy  #Optional, for direct RF generator control
     """
     simpleawglogic = Connector(interface='SimpleAWGLogic')
-    save_filepath = ConfigOption('save_path', missing="warn")
+    _microwave = Connector(name='microwave', interface='MicrowaveInterface', optional=True)
+    save_filepath = ConfigOption('save_path')
+
+    NEW_SEQUENCE_LABEL = 'New Sequence'
 
     def on_activate(self):
 
@@ -48,23 +56,40 @@ class SimpleAWGGui(GuiBase):
         self.sequences = {'': np.array([]), 'Clear': [{'block': 'idle', 'channels': ['a_ch1', 'a_ch2', 'a_ch3', 'a_ch4', 'd_ch1', 'd_ch2', 'd_ch3', 'd_ch4', 'd_ch5', 'd_ch6'], 'repetitions': 1, 'Send Trig': 1, 'Receive Trig': 0}]}
 
         #Try to load existing sequences and pulse blocks
+        if self.save_filepath is None:
+            self.save_filepath = paths.get_default_data_dir() + '\\Pulses'
+        if not os.path.exists(self.save_filepath):
+            try:
+                os.mkdir(self.save_filepath)
+                self.log.info(f'Made directory for storing pulses: {self.save_filepath}')
+            except:
+                self.log.error(f'Unable to create directory for storing pulses, check if parent-dir exists: {self.save_filepath}')
         try:
-            with open(f"{self.save_filepath}\Sequences.pkl", "rb") as f:
+            with open(f"{self.save_filepath}\\Sequences.pkl", "rb") as f:
                 self.sequences = pickle.load(f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error loading dictionary: {e}")
 
         try:
-            with open(f"{self.save_filepath}\Pulse_Blocks.pkl", "rb") as f:
+            with open(f"{self.save_filepath}\\Pulse_Blocks.pkl", "rb") as f:
                 self.pulse_blocks = pickle.load(f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error loading dictionary: {e}")
+
+        #Pulse Sequencer sequences are stored separately, as inline pulse/idle time steps
+        self.pulse_sequences = {}
+        try:
+            with open(f"{self.save_filepath}\\PulseSequences.json", "r") as f:
+                self.pulse_sequences = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Error loading pulse sequences: {e}")
 
         #These are used for graphs
         self.plot_buffer = []
         self._waveform_dict = {}
            
         self.sequence_table = None
+        self.pulse_sequence_table = None
 
         #enables accessing the logic
         self._logic = self.simpleawglogic()
@@ -86,10 +111,12 @@ class SimpleAWGGui(GuiBase):
         self.channels_tab = QtWidgets.QWidget()
         self.creation_tab = QtWidgets.QWidget()
         self.sequence_tab = QWidget()
+        self.pulse_sequencer_tab = QWidget()
         self.tabs.addTab(self.waveform_tab, "Waveforms")
         self.tabs.addTab(self.channels_tab, "Channels")
         self.tabs.addTab(self.creation_tab, "Create Pulse")
         self.tabs.addTab(self.sequence_tab, "Sequence Manager")
+        self.tabs.addTab(self.pulse_sequencer_tab, "Pulse Sequencer")
 
         waveform_layout = QtWidgets.QVBoxLayout(self.waveform_tab)
         channels_layout = QtWidgets.QVBoxLayout(self.channels_tab)
@@ -167,11 +194,74 @@ class SimpleAWGGui(GuiBase):
 
         waveform_layout.addLayout(button_layout)
 
+        hw_button_layout = QtWidgets.QHBoxLayout()
+        waveform_layout.addLayout(hw_button_layout)
+
+
         self.awg_toggle_button = QtWidgets.QPushButton("Connect to AWG")
         self.awg_toggle_button.setCheckable(True)
-        waveform_layout.addWidget(self.awg_toggle_button)
-        
+        hw_button_layout.addWidget(self.awg_toggle_button)
         self.awg_toggle_button.toggled.connect(self.toggle_awg)
+
+        ### RF Control Window for manual control ###
+
+        self.rfgen_button = QtWidgets.QPushButton('RF Generator Control')
+        if self._microwave.is_connected:
+            self.rfgen_button.clicked.connect(self._load_rfcontrol)
+        else:
+            self.rfgen_button.setDisabled(True)
+        hw_button_layout.addWidget(self.rfgen_button)
+
+        self._rf_control_window = QtWidgets.QDialog(self._main_window)
+        self._rf_control_window.setWindowTitle('RF Signal Generator Control')
+        _rf_control_layout = QtWidgets.QGridLayout()
+        self._rf_control_window.setLayout(_rf_control_layout)
+
+        _rf_control_layout.addWidget(QtWidgets.QLabel('RF Frequency (Hz)'), 0, 0)
+        self._rf_control_frequency = ScienDSpinBox()
+        self._rf_control_frequency.setMinimum(100e6)
+        self._rf_control_frequency.setMaximum(6e9)
+        self._rf_control_frequency.setSuffix('Hz')
+        self._rf_control_frequency.setMinimumSize(75, 0)
+        _rf_control_layout.addWidget(self._rf_control_frequency, 0, 1)
+
+        _rf_control_layout.addWidget(QtWidgets.QLabel('RF Power (dBm)'), 1, 0)
+        self._rf_control_power = QtWidgets.QDoubleSpinBox()
+        self._rf_control_power.setMinimum(-110)
+        self._rf_control_power.setMaximum(16.5)
+        self._rf_control_power.setDecimals(2)
+        self._rf_control_power.setSingleStep(0.1)
+        _rf_control_layout.addWidget(self._rf_control_power, 1, 1)
+
+        _rf_control_layout.addWidget(QtWidgets.QLabel('Enable Modulation'), 2, 0)
+        self._rf_control_modEnable = QtWidgets.QCheckBox()
+        _rf_control_layout.addWidget(self._rf_control_modEnable, 2, 1)
+
+        self._rf_control_rfEnable = QtWidgets.QPushButton('Enable Output')
+        self._rf_control_rfEnable.setCheckable(True)
+        self._rf_control_rfEnable.setStyleSheet("""
+            QPushButton:checked { background-color: red; }
+            QPushButton:hover { background-color: grey; }
+            """)
+        _rf_control_layout.addWidget(self._rf_control_rfEnable, 3, 0, 1, 2)
+
+        self._rf_control_update_btn = QtWidgets.QPushButton('Update values')
+        _rf_control_layout.addWidget(self._rf_control_update_btn, 4, 0, 1, 2)
+
+        self._rf_control_frequency.valueChanged.connect(lambda x: self._rf_control_send(frequency=x))
+        self._rf_control_power.valueChanged.connect(lambda x: self._rf_control_send(power=x))
+        self._rf_control_modEnable.stateChanged.connect(lambda x: self._rf_control_send(modulation=x))    
+        self._rf_control_rfEnable.toggled.connect(lambda x: self._rf_control_send(rfEnable=x))
+        self._rf_control_update_btn.toggled.connect(self._rf_control_update)
+
+        self._rf_control_lock_timer = QTimer()
+        self._rf_control_lock_timer.setInterval(1000)
+        self._rf_control_lock_timer.timeout.connect(self._rf_control_check_for_lock)
+        self._rf_control_lock_timer.start()
+
+        self._rf_control_update()
+
+
 
         # ----------------------------------------
         # Status label (not used too much tbh)
@@ -621,14 +711,13 @@ class SimpleAWGGui(GuiBase):
         iteration_manage_layout.setContentsMargins(100, 0, 100, 0)
         
         self.sequence_table = QTableWidget()
-        self.sequence_table.setColumnCount(6)
+        self.sequence_table.setColumnCount(5)
         
         self.sequence_table.setHorizontalHeaderLabels([
             "Pulse Block",
             "Channels",
             "Repetitions",
-            "Send Trig",
-            "Receive Trig",
+            "Start After Step",
             "IQ Phase"
         ])
         
@@ -648,12 +737,11 @@ class SimpleAWGGui(GuiBase):
         load_file_btn = QPushButton("Load Sequence from File")
 
         current_indicator = QHBoxLayout()
-        current_label = QLabel("Current Sequence:")
 
         self.sequence_select = QComboBox()
+        #self.sequence_select.setMinimumWidth()
         self.sequence_select.addItems(self.sequences.keys())
 
-        current_indicator.addWidget(current_label)
         current_indicator.addWidget(self.sequence_select)
         current_indicator.addWidget(load_sequence_btn)
 
@@ -665,6 +753,9 @@ class SimpleAWGGui(GuiBase):
         load_file_btn.clicked.connect(self.load_sequence_file)
 
         self.new_sequence_name = QLineEdit() 
+        self.new_sequence_name.textChanged.connect(self.mark_sequence_dirty)
+
+        self.sequence_modified_label = QLabel("")
 
         sequence_button_layout = QFormLayout()
 
@@ -674,6 +765,7 @@ class SimpleAWGGui(GuiBase):
         standard_btns.addWidget(write_sequence_btn)
         standard_btns.addWidget(save_sequence_btn)
         standard_btns.addWidget(self.new_sequence_name)
+        standard_btns.addWidget(self.sequence_modified_label)
         
         sequence_button_layout.addRow(standard_btns)
         sequence_button_layout.addRow(current_indicator)
@@ -682,11 +774,105 @@ class SimpleAWGGui(GuiBase):
         sequence_layout.addWidget(self.sequence_table)
         sequence_layout.addLayout(sequence_button_layout)
 
+        self._sequence_dirty = False
+
+        # ------------ PULSE SEQUENCER ------------------- #
+
+        pulse_sequence_layout = QVBoxLayout(self.pulse_sequencer_tab)
+
+        self.pulse_sequence_table = QTableWidget()
+        self.pulse_sequence_table.setColumnCount(6)
+
+        self.pulse_sequence_table.setHorizontalHeaderLabels([
+            "Pulse Time",
+            "Idle Time",
+            "Channels",
+            "Repetitions",
+            "Start After Step",
+            "IQ Phase"
+        ])
+
+        self.pulse_sequence_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.Stretch
+        )
+
+        pulse_seq_add_btn = QPushButton("Add Step")
+        pulse_seq_remove_btn = QPushButton("Remove Step")
+        pulse_seq_write_btn = QPushButton("Write Sequence")
+        pulse_seq_save_btn = QPushButton("Save Sequence")
+        pulse_seq_delete_btn = QPushButton("Delete Sequence")
+        pulse_seq_load_btn = QPushButton("Load Sequence")
+
+        pulse_seq_current_indicator = QHBoxLayout()
+
+        self.pulse_sequence_select = QComboBox()
+        self._refresh_pulse_sequence_combo()
+
+        pulse_seq_current_indicator.addWidget(self.pulse_sequence_select)
+        pulse_seq_current_indicator.addWidget(pulse_seq_load_btn)
+        pulse_seq_current_indicator.addWidget(pulse_seq_delete_btn)
+
+        pulse_seq_add_btn.clicked.connect(self.add_pulse_sequence_step)
+        pulse_seq_remove_btn.clicked.connect(self.remove_pulse_sequence_step)
+        pulse_seq_write_btn.clicked.connect(self.write_pulse_sequence)
+        pulse_seq_save_btn.clicked.connect(self.save_pulse_sequence)
+        pulse_seq_delete_btn.clicked.connect(self.delete_pulse_sequence)
+        pulse_seq_load_btn.clicked.connect(self.load_pulse_sequence)
+
+        self.new_pulse_sequence_name = QLineEdit()
+        self.new_pulse_sequence_name.textChanged.connect(self.mark_pulse_sequence_dirty)
+
+        self.pulse_sequence_modified_label = QLabel("")
+
+        sample_rate_layout = QHBoxLayout()
+        sample_rate_constraints = self._logic.awg().constraints.sample_rate
+        self.pulse_sequence_sample_rate = ScienDSpinBox()
+        self.pulse_sequence_sample_rate.setMinimum(sample_rate_constraints.min)
+        self.pulse_sequence_sample_rate.setMaximum(sample_rate_constraints.max)
+        self.pulse_sequence_sample_rate.setSuffix('Hz')
+        self.pulse_sequence_sample_rate.setValue(self._logic.awg().get_sample_rate())
+        self.pulse_sequence_sample_rate.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        sample_rate_layout.addWidget(QLabel("Sample Rate:"))
+        sample_rate_layout.addWidget(self.pulse_sequence_sample_rate)
+
+        pulse_seq_button_layout = QFormLayout()
+
+        pulse_seq_standard_btns = QHBoxLayout()
+        pulse_seq_standard_btns.addWidget(pulse_seq_add_btn)
+        pulse_seq_standard_btns.addWidget(pulse_seq_remove_btn)
+        pulse_seq_standard_btns.addWidget(pulse_seq_write_btn)
+        pulse_seq_standard_btns.addWidget(pulse_seq_save_btn)
+        pulse_seq_standard_btns.addWidget(self.new_pulse_sequence_name)
+        pulse_seq_standard_btns.addWidget(self.pulse_sequence_modified_label)
+
+        pulse_seq_button_layout.addRow(sample_rate_layout)
+        pulse_seq_button_layout.addRow(pulse_seq_standard_btns)
+        pulse_seq_button_layout.addRow(pulse_seq_current_indicator)
+
+        pulse_sequence_layout.addWidget(self.pulse_sequence_table)
+        pulse_sequence_layout.addLayout(pulse_seq_button_layout)
+
+        # Defaults to the permanent empty entry rather than whatever was last saved
+        self.pulse_sequence_select.setCurrentText(self.NEW_SEQUENCE_LABEL)
+        self.load_pulse_sequence()
+
         self.show()
         if not self._logic._awg.connected:
             self.toggle_awg()
+        else:
+            # toggle_awg() (which populates self.available_channels) only runs above when
+            # connecting; if the AWG was already connected from a prior GUI reload, do it here
+            self.refresh_channel_selector()
 
     def on_deactivate(self):
+        self._rf_control_frequency.valueChanged.disconnect()
+        self._rf_control_power.valueChanged.disconnect()
+        self._rf_control_modEnable.stateChanged.disconnect() 
+        self._rf_control_rfEnable.toggled.disconnect()
+        self._rf_control_update_btn.toggled.disconnect()
+        self._rf_control_lock_timer.timeout.disconnect()
+        self._rf_control_lock_timer.stop()
+        self._rf_control_window.close()
         self._main_window.close()
 
     # -------------------------------------------------
@@ -742,8 +928,6 @@ class SimpleAWGGui(GuiBase):
                 self.plot_widget.clear()
             else:
                 waveform = self._waveform_dict[channel]
-                if self._logic.awg().reps == 0:
-                    waveform = waveform[:len(waveform)//32]
                 waveform=waveform[:min(len(waveform), max_length)]
         
                 self.plot_widget.plot(waveform)
@@ -839,6 +1023,9 @@ class SimpleAWGGui(GuiBase):
 
         if not self.sequence_table is None:
             self.rebuild_entire_table()
+
+        if not self.pulse_sequence_table is None:
+            self.rebuild_pulse_sequence_table(self.get_pulse_sequence())
 
     def make_channel_toggle_handler(self, channel):
         """ GUI layer toggles AWG channel states"""
@@ -943,7 +1130,7 @@ class SimpleAWGGui(GuiBase):
 
     def plot_pulse(self):
         """ Plots the chosen pulse block """
-        compiler = PulseCompiler(None, self.pulse_blocks, self._logic, self._logic.awg().get_sample_rate() )
+        compiler = PulseCompiler(None, self.pulse_blocks, self._logic, sample_rate=self._logic.awg().get_sample_rate())
         self.plot_buffer = compiler.compile_pulse(self.create_pulse()) #self.create_waveform()
         self.refresh_plot()
 
@@ -966,7 +1153,7 @@ class SimpleAWGGui(GuiBase):
 
         #Load currently saved pulse blocks
         try:
-            with open(f"{self.save_filepath}\Pulse_Blocks.pkl", "rb") as f:
+            with open(f"{self.save_filepath}\\Pulse_Blocks.pkl", "rb") as f:
                 saved_blocks = pickle.load(f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error saving dictionary: {e}")
@@ -975,7 +1162,7 @@ class SimpleAWGGui(GuiBase):
 
         #Save all previous pulse blocks and chosen
         try:
-            with open(f"{self.save_filepath}\Pulse_Blocks.pkl", "wb") as f:
+            with open(f"{self.save_filepath}\\Pulse_Blocks.pkl", "wb") as f:
                 pickle.dump(saved_blocks, f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error saving dictionary: {e}")
@@ -1004,7 +1191,7 @@ class SimpleAWGGui(GuiBase):
         if block_name is None:
             return
 
-        compiler = PulseCompiler(None, self.pulse_blocks, self._logic, self._logic.awg().get_sample_rate() )
+        compiler = PulseCompiler(None, self.pulse_blocks, self._logic, sample_rate=self._logic.awg().get_sample_rate())
 
         self._logic.load_waveform_file(compiler.compile_pulse(self.pulse_blocks[block_name], 0), channel)
         
@@ -1036,24 +1223,22 @@ class SimpleAWGGui(GuiBase):
         self.sequence_table.setCellWidget(row, 2, reps)
     
         #
-        # send and receive
+        # Start After Step - which step number this step should begin after (0 = start immediately)
         #
-        send_flag = QSpinBox()
-        send_flag.setRange(0, 9999)
-        send_flag.setValue(1)
-        self.sequence_table.setCellWidget(row, 3, send_flag)
-
-        recieve_flag = QSpinBox()
-        recieve_flag.setRange(0, 9999)
-        recieve_flag.setValue(0)
-        self.sequence_table.setCellWidget(row, 4, recieve_flag)
+        start_after_step = QSpinBox()
+        start_after_step.setRange(0, 9999)
+        start_after_step.setValue(0)
+        self.sequence_table.setCellWidget(row, 3, start_after_step)
 
         iq_phase = QDoubleSpinBox()
         iq_phase.setRange(-360, 360)
         iq_phase.setValue(0)
-        self.sequence_table.setCellWidget(row, 5, iq_phase)
+        self.sequence_table.setCellWidget(row, 4, iq_phase)
     
         self.sequence_table.resizeRowToContents(row)
+
+        self._connect_row_dirty_signals(block, channel_widget, reps, start_after_step, iq_phase)
+        self.mark_sequence_dirty()
 
     def remove_sequence_step(self):
         """ Remove a step from the sequence GUI """
@@ -1061,6 +1246,7 @@ class SimpleAWGGui(GuiBase):
     
         if row >= 0:
             self.sequence_table.removeRow(row)
+            self.mark_sequence_dirty()
 
     def get_sequence(self):
         """ Returns the sequence as a dictionary """
@@ -1072,35 +1258,30 @@ class SimpleAWGGui(GuiBase):
             block = self.sequence_table.cellWidget(row, 0).currentText()
             channels = self.sequence_table.cellWidget(row, 1).selected_channels()
             reps = self.sequence_table.cellWidget(row, 2).value()
-            send_flag = self.sequence_table.cellWidget(row, 3).value()
-            recieve_flag = self.sequence_table.cellWidget(row, 4).value()
-            iq_phase = self.sequence_table.cellWidget(row, 5).value()
+            start_after_step = self.sequence_table.cellWidget(row, 3).value()
+            iq_phase = self.sequence_table.cellWidget(row, 4).value()
             
             sequence.append({
                 "block": block,
                 "channels": channels,
                 "repetitions": reps,
-                "Send Trig": send_flag,
-                "Receive Trig": recieve_flag,
+                "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
+                "Receive Trig": start_after_step,
                 "IQ Phase": iq_phase
             })
     
         return sequence
 
     def write_sequence(self):
-        """ Calls logic to compile the sequence """
-        selected_sequence = self.sequence_select.currentText()
-        potential_new_name = self.new_sequence_name.text()
+        """ Compiles the sequence as currently displayed in the table """
+        sequence_name = self.new_sequence_name.text()
+        sequence = self.get_sequence()
 
-        if selected_sequence == "" or selected_sequence == potential_new_name:
-            sequence = self.get_sequence()
-            self.sequences[potential_new_name] = sequence
+        self.sequences[sequence_name] = sequence
 
-            self.sequence_select.clear()
-            self.sequence_select.addItems(self.sequences.keys())
-            self.sequence_select.setCurrentText(potential_new_name)
-        else:
-            sequence = self.sequences[selected_sequence]
+        self.sequence_select.clear()
+        self.sequence_select.addItems(self.sequences.keys())
+        self.sequence_select.setCurrentText(sequence_name)
         
         waveforms = {}
 
@@ -1109,10 +1290,11 @@ class SimpleAWGGui(GuiBase):
         compiler = PulseCompiler(sequence, self.pulse_blocks, self._logic, steps_per_iter=steps_per_iter)
         waveforms = compiler.compile()
 
-        for channel in waveforms.keys():
-            self._logic.load_waveform_file(np.array(waveforms[channel]), channel)
+        self._logic.load_waveform_set(waveforms)
             
-        self._logic.update_pulses_and_sequences(self.sequences[selected_sequence], self.pulse_blocks)
+        self._logic.update_pulses_and_sequences(sequence, self.pulse_blocks)
+
+        self.clear_sequence_dirty()
 
         # for i in range(1000):
         #     avail_pulses = self.pulse_blocks.copy()
@@ -1142,37 +1324,30 @@ class SimpleAWGGui(GuiBase):
             compiler = PulseCompiler(sequence, self.pulse_blocks, self._logic, steps_per_iter=steps_per_iter)
             waveforms = compiler.compile()
 
-            for channel in waveforms.keys():
-                self._logic.load_waveform_file(np.array(waveforms[channel]), channel)
+            self._logic.load_waveform_set(waveforms)
                 
             self._logic.update_pulses_and_sequences(sequence, self.pulse_blocks)
 
     def save_sequence(self):
-        """ Saves the sequence to target file """
+        """ Saves whatever sequence is currently displayed in the table to disk """
         new_name = self.new_sequence_name.text()
         new_sequence = self.get_sequence()
+
+        self.sequences[new_name] = new_sequence
 
         self.sequence_select.clear()
         self.sequence_select.addItems(self.sequences.keys())
         self.sequence_select.setCurrentText(new_name)
 
-        new_sequences = {}
         try:
-            with open(f"{self.save_filepath}\Sequences.pkl", "rb") as f:
-                new_sequences = pickle.load(f)
-        except (OSError, pickle.PickleError) as e:
-            print(f"Error saving dictionary: {e}")
-        new_sequences[new_name] = new_sequence
-
-        try:
-            with open(f"{self.save_filepath}\Sequences.pkl", "wb") as f:
+            with open(f"{self.save_filepath}\\Sequences.pkl", "wb") as f:
                 pickle.dump(self.sequences, f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error saving dictionary: {e}")
 
         new_blocks = {}
         try:
-            with open(f"{self.save_filepath}\Pulse_Blocks.pkl", "rb") as f:
+            with open(f"{self.save_filepath}\\Pulse_Blocks.pkl", "rb") as f:
                 new_blocks = pickle.load(f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error saving dictionary: {e}")
@@ -1182,10 +1357,12 @@ class SimpleAWGGui(GuiBase):
             new_blocks[block] = self.pulse_blocks[block]
 
         try:
-            with open(f"{self.save_filepath}\Pulse_Blocks.pkl", "wb") as f:
+            with open(f"{self.save_filepath}\\Pulse_Blocks.pkl", "wb") as f:
                 pickle.dump(new_blocks, f)
         except (OSError, pickle.PickleError) as e:
             print(f"Error saving dictionary: {e}")
+
+        self.clear_sequence_dirty()
 
     def load_sequence(self):
         """ Loads the sequence into the GUI """
@@ -1196,11 +1373,33 @@ class SimpleAWGGui(GuiBase):
         
         self.rebuild_entire_table(sequence=sequence)
 
+        # rebuilding the table triggers dirty signals; the freshly loaded sequence is clean
+        self.clear_sequence_dirty()
+
+    def mark_sequence_dirty(self, *_args):
+        """ Flags the displayed sequence as having unsaved changes """
+        self._sequence_dirty = True
+        self.sequence_modified_label.setText('*')
+
+    def clear_sequence_dirty(self):
+        """ Flags the displayed sequence as matching the last written/saved/loaded state """
+        self._sequence_dirty = False
+        self.sequence_modified_label.setText('')
+
+    def _connect_row_dirty_signals(self, block, channel_widget, reps, start_after_step, iq_phase):
+        """ Marks the sequence dirty whenever any widget in a sequence table row changes """
+        block.currentIndexChanged.connect(self.mark_sequence_dirty)
+        reps.valueChanged.connect(self.mark_sequence_dirty)
+        start_after_step.valueChanged.connect(self.mark_sequence_dirty)
+        iq_phase.valueChanged.connect(self.mark_sequence_dirty)
+        for checkbox in channel_widget.checkboxes.values():
+            checkbox.toggled.connect(self.mark_sequence_dirty)
+
 
     def rebuild_entire_table(self, sequence=None):
         """ Updates the entire table to match current conditions (IE channels, and pulse blocks) """
         # store current state
-        if sequence == None:
+        if sequence is None:
             old_sequence = self.get_sequence()
         else:
             old_sequence = sequence
@@ -1208,9 +1407,9 @@ class SimpleAWGGui(GuiBase):
         self.sequence_table.clear()
         self.sequence_table.setRowCount(0)
     
-        self.sequence_table.setColumnCount(6)
+        self.sequence_table.setColumnCount(5)
         self.sequence_table.setHorizontalHeaderLabels([
-            "Block", "Channels", "Reps", "Send Trig", "Receive Trig", "IQ Phase"
+            "Block", "Channels", "Reps", "Start After Step", "IQ Phase"
         ])
     
         # rebuild rows
@@ -1238,25 +1437,339 @@ class SimpleAWGGui(GuiBase):
             reps.setValue(step["repetitions"])
 
     
-            send_flag = QSpinBox()
-            send_flag.setValue(step["Send Trig"])
-            send_flag.setMinimum(0)
-
-            recieve_flag = QSpinBox()
-            print(step)
-            recieve_flag.setValue(step["Receive Trig"])
-            recieve_flag.setMinimum(0)
+            start_after_step = QSpinBox()
+            start_after_step.setRange(0, 9999)
+            start_after_step.setValue(step["Receive Trig"])
     
             self.sequence_table.setCellWidget(row, 2, reps)
-            self.sequence_table.setCellWidget(row, 3, send_flag)
-            self.sequence_table.setCellWidget(row, 4, recieve_flag)
+            self.sequence_table.setCellWidget(row, 3, start_after_step)
 
             iq_phase = QDoubleSpinBox()
             iq_phase.setRange(-360, 360)
             iq_phase.setValue(0)
-            self.sequence_table.setCellWidget(row, 5, iq_phase)
+            self.sequence_table.setCellWidget(row, 4, iq_phase)
 
             self.sequence_table.resizeRowToContents(row)
+
+            self._connect_row_dirty_signals(block, ch_widget, reps, start_after_step, iq_phase)
+
+    # -------------------------------------------------
+    # Pulse Sequencer tab
+    # -------------------------------------------------
+
+    def add_pulse_sequence_step(self):
+        """ Adds a step to the Pulse Sequencer table """
+        row = self.pulse_sequence_table.rowCount()
+        self.pulse_sequence_table.insertRow(row)
+
+        pulse_time = ScienDSpinBox()
+        pulse_time.setMinimum(0)
+        pulse_time.setSuffix('s')
+        pulse_time.setValue(10e-9)
+        self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
+
+        idle_time = ScienDSpinBox()
+        idle_time.setMinimum(0)
+        idle_time.setSuffix('s')
+        idle_time.setValue(10e-9)
+        self.pulse_sequence_table.setCellWidget(row, 1, idle_time)
+
+        channel_widget = ChannelWidget(["IQ"] + self.available_channels)
+        self.pulse_sequence_table.setCellWidget(row, 2, channel_widget)
+
+        reps = QSpinBox()
+        reps.setRange(1, 10000)
+        reps.setValue(1)
+        self.pulse_sequence_table.setCellWidget(row, 3, reps)
+
+        start_after_step = QSpinBox()
+        start_after_step.setRange(0, 9999)
+        start_after_step.setValue(0)
+        self.pulse_sequence_table.setCellWidget(row, 4, start_after_step)
+
+        iq_phase = QDoubleSpinBox()
+        iq_phase.setRange(-360, 360)
+        iq_phase.setValue(0)
+        self.pulse_sequence_table.setCellWidget(row, 5, iq_phase)
+
+        self.pulse_sequence_table.resizeRowToContents(row)
+
+        self._connect_pulse_sequence_row_dirty_signals(
+            pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase
+        )
+        self.mark_pulse_sequence_dirty()
+
+    def remove_pulse_sequence_step(self):
+        """ Removes the selected step from the Pulse Sequencer table """
+        row = self.pulse_sequence_table.currentRow()
+
+        if row >= 0:
+            self.pulse_sequence_table.removeRow(row)
+            self.mark_pulse_sequence_dirty()
+
+    def get_pulse_sequence(self):
+        """ Returns the Pulse Sequencer table contents as a sequence of inline pulse/idle blocks """
+        sequence = []
+
+        for row in range(self.pulse_sequence_table.rowCount()):
+            pulse_time = self.pulse_sequence_table.cellWidget(row, 0).value()
+            idle_time = self.pulse_sequence_table.cellWidget(row, 1).value()
+            channels = self.pulse_sequence_table.cellWidget(row, 2).selected_channels()
+            reps = self.pulse_sequence_table.cellWidget(row, 3).value()
+            start_after_step = self.pulse_sequence_table.cellWidget(row, 4).value()
+            iq_phase = self.pulse_sequence_table.cellWidget(row, 5).value()
+
+            sequence.append({
+                # inline block - no named pulse block or increments, matches PulseCompiler's "Pulses" format
+                "block": ["Pulses", pulse_time, idle_time, 0, 0],
+                "channels": channels,
+                "repetitions": reps,
+                "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
+                "Receive Trig": start_after_step,
+                "IQ Phase": iq_phase
+            })
+
+        return sequence
+    
+    def write_pulse_sequence(self):
+        """ Compiles and uploads the sequence currently displayed in the Pulse Sequencer table """
+        sequence = self.get_pulse_sequence()
+        sample_rate = self.pulse_sequence_sample_rate.value()
+
+        # Match the AWG's sample clock to the requested rate so the compiled bin size lines up with the hardware
+        self._logic.set_sample_rate(sample_rate)
+
+        compiler = PulseCompiler(sequence, {}, self._logic, sample_rate=sample_rate)
+        waveforms = compiler.compile()
+
+        self._logic.load_waveform_set(waveforms)
+
+        self._logic.update_pulses_and_sequences(sequence, {})
+
+        self.clear_pulse_sequence_dirty()
+
+    def save_pulse_sequence(self):
+        """ Saves the sequence currently displayed in the Pulse Sequencer table to disk """
+        sequence_name = self.new_pulse_sequence_name.text()
+
+        if sequence_name == self.NEW_SEQUENCE_LABEL:
+            self.update_status(f'"{self.NEW_SEQUENCE_LABEL}" is reserved and cannot be overwritten - choose another name')
+            return
+
+        sequence = self.get_pulse_sequence()
+
+        self.pulse_sequences[sequence_name] = {
+            "steps": sequence,
+            "sample_rate": self.pulse_sequence_sample_rate.value()
+        }
+
+        self._refresh_pulse_sequence_combo(select_name=sequence_name)
+
+        try:
+            with open(f"{self.save_filepath}\\PulseSequences.json", "w") as f:
+                json.dump(self.pulse_sequences, f)
+        except OSError as e:
+            print(f"Error saving pulse sequences: {e}")
+
+        self.clear_pulse_sequence_dirty()
+
+    def delete_pulse_sequence(self):
+        """ Removes the currently selected saved sequence from disk and the dropdown """
+        sequence_name = self.pulse_sequence_select.currentText()
+
+        if sequence_name == self.NEW_SEQUENCE_LABEL:
+            self.update_status(f'"{self.NEW_SEQUENCE_LABEL}" is reserved and cannot be deleted')
+            return
+
+        if sequence_name not in self.pulse_sequences:
+            return
+
+        del self.pulse_sequences[sequence_name]
+
+        self._refresh_pulse_sequence_combo()
+
+        try:
+            with open(f"{self.save_filepath}\\PulseSequences.json", "w") as f:
+                json.dump(self.pulse_sequences, f)
+        except OSError as e:
+            print(f"Error saving pulse sequences: {e}")
+
+    def load_pulse_sequence(self):
+        """ Loads the selected saved sequence into the Pulse Sequencer table """
+        selected_sequence = self.pulse_sequence_select.currentText()
+
+        if selected_sequence == self.NEW_SEQUENCE_LABEL:
+            sequence = []
+            sample_rate = self._logic.awg().get_sample_rate()
+            self.new_pulse_sequence_name.setText('')
+        elif selected_sequence in self.pulse_sequences:
+            saved_entry = self.pulse_sequences[selected_sequence]
+            # older saved files stored a bare list of steps with no sample rate attached
+            if isinstance(saved_entry, dict):
+                sequence = saved_entry["steps"]
+                sample_rate = saved_entry.get("sample_rate", self.pulse_sequence_sample_rate.value())
+            else:
+                sequence = saved_entry
+                sample_rate = self.pulse_sequence_sample_rate.value()
+            self.new_pulse_sequence_name.setText(selected_sequence)
+        else:
+            return
+
+        self.pulse_sequence_sample_rate.setValue(sample_rate)
+
+        self.rebuild_pulse_sequence_table(sequence)
+
+        # rebuilding the table triggers dirty signals; the freshly loaded sequence is clean
+        self.clear_pulse_sequence_dirty()
+
+    def _refresh_pulse_sequence_combo(self, select_name=None):
+        """ Repopulates the sequence dropdown, keeping the permanent 'New Sequence' entry first """
+        self.pulse_sequence_select.clear()
+        self.pulse_sequence_select.addItems([self.NEW_SEQUENCE_LABEL] + list(self.pulse_sequences.keys()))
+        if select_name is not None:
+            self.pulse_sequence_select.setCurrentText(select_name)
+
+    def mark_pulse_sequence_dirty(self, *_args):
+        """ Flags the displayed pulse sequence as having unsaved changes """
+        self._pulse_sequence_dirty = True
+        self.pulse_sequence_modified_label.setText('*')
+
+    def clear_pulse_sequence_dirty(self):
+        """ Flags the displayed pulse sequence as matching the last written/saved/loaded state """
+        self._pulse_sequence_dirty = False
+        self.pulse_sequence_modified_label.setText('')
+
+    def _connect_pulse_sequence_row_dirty_signals(self, pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase):
+        """ Marks the pulse sequence dirty whenever any widget in a table row changes """
+        pulse_time.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        idle_time.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        reps.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        start_after_step.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        iq_phase.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        for checkbox in channel_widget.checkboxes.values():
+            checkbox.toggled.connect(self.mark_pulse_sequence_dirty)
+
+    def rebuild_pulse_sequence_table(self, sequence):
+        """ Rebuilds the Pulse Sequencer table to match the given sequence """
+        self.pulse_sequence_table.clear()
+        self.pulse_sequence_table.setRowCount(0)
+
+        self.pulse_sequence_table.setColumnCount(6)
+        self.pulse_sequence_table.setHorizontalHeaderLabels([
+            "Pulse Time", "Idle Time", "Channels", "Repetitions", "Start After Step", "IQ Phase"
+        ])
+
+        for step in sequence:
+            row = self.pulse_sequence_table.rowCount()
+            self.pulse_sequence_table.insertRow(row)
+
+            block = step["block"]
+
+            pulse_time = ScienDSpinBox()
+            pulse_time.setMinimum(0)
+            pulse_time.setSuffix('s')
+            pulse_time.setValue(block[1])
+            self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
+
+            idle_time = ScienDSpinBox()
+            idle_time.setMinimum(0)
+            idle_time.setSuffix('s')
+            idle_time.setValue(block[2])
+            self.pulse_sequence_table.setCellWidget(row, 1, idle_time)
+
+            channel_widget = ChannelWidget(["IQ"] + self.available_channels)
+            channel_widget.set_channels(step["channels"])
+            self.pulse_sequence_table.setCellWidget(row, 2, channel_widget)
+
+            reps = QSpinBox()
+            reps.setRange(1, 10000)
+            reps.setValue(step["repetitions"])
+            self.pulse_sequence_table.setCellWidget(row, 3, reps)
+
+            start_after_step = QSpinBox()
+            start_after_step.setRange(0, 9999)
+            start_after_step.setValue(step["Receive Trig"])
+            self.pulse_sequence_table.setCellWidget(row, 4, start_after_step)
+
+            iq_phase = QDoubleSpinBox()
+            iq_phase.setRange(-360, 360)
+            iq_phase.setValue(step["IQ Phase"])
+            self.pulse_sequence_table.setCellWidget(row, 5, iq_phase)
+
+            self.pulse_sequence_table.resizeRowToContents(row)
+
+            self._connect_pulse_sequence_row_dirty_signals(
+                pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase
+            )
+
+    def _load_rfcontrol(self, checked=False):
+        if self._microwave.is_connected:
+            self._rf_control_window.show()
+
+    def _rf_control_send(self,frequency=None,power=None,modulation=None,rfEnable=None):
+        if not self._microwave.is_connected:
+            self.log.warning("RF Control called but microwave module not connected, ignoring")
+            return
+        if frequency is not None:
+            try:
+                self._microwave().cw_frequency = frequency
+            except RuntimeError as e:
+                self.log.warning(e)
+        if power is not None:
+            try:
+                self._microwave().cw_power = power
+            except RuntimeError as e:
+                self.log.warning(e)
+        if modulation is not None:
+            try:
+                if modulation:
+                    self._microwave().set_pulsed()
+                else:
+                    self._microwave().set_cw()
+            except RuntimeError as e:
+                self.log.warning(e)
+        if rfEnable is not None:
+            try:
+                if rfEnable:
+                    self._microwave().cw_on()
+                else:
+                    self._microwave().cw_off()
+            except RuntimeError as e:
+                self.log.warning(e)
+
+    def _rf_control_update(self):
+        if not self._microwave.is_connected:
+            self.log.warning("RF Control called but microwave module not connected, ignoring")
+            return
+        self._rf_control_frequency.blockSignals(True)
+        self._rf_control_power.blockSignals(True)
+        self._rf_control_modEnable.blockSignals(True)
+        self._rf_control_rfEnable.blockSignals(True)
+
+        self._rf_control_frequency.setValue(self._microwave().cw_frequency)
+        self._rf_control_power.setValue(self._microwave().cw_power)
+        self._rf_control_modEnable.setChecked(self._microwave().modulation_active)
+        self._rf_control_rfEnable.setChecked(self._microwave().output_active)
+
+        self._rf_control_frequency.blockSignals(False)
+        self._rf_control_power.blockSignals(False)
+        self._rf_control_modEnable.blockSignals(False)
+        self._rf_control_rfEnable.blockSignals(False)
+
+    def _rf_control_check_for_lock(self):
+        if not self._microwave.is_connected:
+            return
+        if self._microwave().module_state() != 'idle':
+            self._rf_control_frequency.setDisabled(True)
+            self._rf_control_power.setDisabled(True)
+            self._rf_control_modEnable.setDisabled(True)
+        else:
+            self._rf_control_frequency.setDisabled(False)
+            self._rf_control_power.setDisabled(False)
+            self._rf_control_modEnable.setDisabled(False)
+
+
+            
 
 class ChannelWidget(QWidget):
     """ Channel Widget records the channels splitting the GUI into digital and analog """
@@ -1320,3 +1833,6 @@ class ChannelWidget(QWidget):
 
         for name, cb in self.checkboxes.items():
             cb.setChecked(name in channels)
+
+
+

@@ -4,7 +4,6 @@ from qtpy import QtCore
 
 from qudi.core.module import LogicBase
 from qudi.core.connector import Connector
-import spcm
 import time
 import copy
 
@@ -73,7 +72,6 @@ class SimpleAWGLogic(LogicBase):
 
     def load_waveform_file(self, filepath, channel_key):
         """ Load the chosen waveform into the channel. filepath can be a actual file or a numpy array """
-        graph_waveform = {}
         try:
             self.log.debug("Loading waveform")
 
@@ -83,67 +81,10 @@ class SimpleAWGLogic(LogicBase):
             else:
                 temp_data = filepath
 
-            # Differentiate behavior between analog and digital
-            if 'a_' in channel_key:
-                if temp_data.ndim > 1:
-                    temp_data = temp_data[:, 0]
-                data = []
-
-                if np.max(temp_data) <= 1 and np.min(temp_data) >= -1:
-                    temp_data = temp_data * 32767 # Scales to max amplitude
-                    temp_data = np.asarray(temp_data, dtype=np.int16)
-                else:
-                    temp_data = np.asarray(temp_data, dtype=np.int16)
-    
-                temp_data = np.clip(temp_data, -32767, 32767)
-                # if self._awg.reps > 0:
-                # Pad to multiple of 32 samples
-                remainder = len(temp_data) % 32
-                
-                if remainder != 0:
-                    pad_len = 32 - remainder
-                
-                    data = np.pad(
-                        temp_data,
-                        (0, pad_len),
-                        mode='constant',
-                        constant_values=0
-                    )
-                else:
-                    data = temp_data
-                # else:
-                    # data = np.zeros(len(temp_data) * 32)
-                    # for i in range(32):
-                        # data[i * len(temp_data): (i+1)*len(temp_data)] = temp_data
-
-            if 'd_' in channel_key:
-                if temp_data.ndim > 1:
-                    temp_data = temp_data[:, 0]
-                data = []
-                temp_data = np.where(temp_data > 0.5, 1, 0) # Set all data to 1 or 0
-
-                # if self._awg.reps > 0:
-                # Pad to multiple of 32 samples
-                remainder = len(temp_data) % 32
-
-                if remainder != 0:
-                    pad_len = 32 - remainder
-                
-                    data = np.pad(
-                        temp_data,
-                        (0, pad_len),
-                        mode='constant',
-                        constant_values=0
-                    )
-                # else:
-                    # data = temp_data
-                # else:
-                    # data = np.zeros(len(temp_data) * 32)
-                    # for i in range(32):
-                        # data[i * len(temp_data): (i+1)*len(temp_data)] = temp_data
+            data = self._process_channel_data(temp_data, channel_key)
 
             self.waveform[channel_key] = data
-            graph_waveform[channel_key] = data[:min(1000000, len(data))] # for preformance reasons limit how much is graphed
+            graph_waveform = {channel_key: data[:min(1000000, len(data))]} # for preformance reasons limit how much is graphed
             self.sigWaveformUpdated.emit(graph_waveform)
 
             if isinstance(filepath, str):
@@ -161,13 +102,90 @@ class SimpleAWGLogic(LogicBase):
                 f'Failed to load waveform: {err}'
             )
 
+    def _process_channel_data(self, temp_data, channel_key):
+        """ Scales/casts/pads raw samples for a single channel without any GUI signal emission """
+        data = temp_data
+
+        # Differentiate behavior between analog and digital
+        if 'a_' in channel_key:
+            if temp_data.ndim > 1:
+                temp_data = temp_data[:, 0]
+
+            if np.max(temp_data) <= 1 and np.min(temp_data) >= -1:
+                temp_data = temp_data * 32767 # Scales to max amplitude
+                temp_data = np.asarray(temp_data, dtype=np.int16)
+            else:
+                temp_data = np.asarray(temp_data, dtype=np.int16)
+
+            temp_data = np.clip(temp_data, -32767, 32767)
+            # Pad to multiple of 32 samples
+            remainder = len(temp_data) % 32
+
+            if remainder != 0:
+                pad_len = 32 - remainder
+
+                data = np.pad(
+                    temp_data,
+                    (0, pad_len),
+                    mode='constant',
+                    constant_values=0
+                )
+            else:
+                data = temp_data
+
+        if 'd_' in channel_key:
+            if temp_data.ndim > 1:
+                temp_data = temp_data[:, 0]
+            temp_data = np.where(temp_data > 0.5, 1, 0) # Set all data to 1 or 0
+
+            # Pad to multiple of 32 samples
+            remainder = len(temp_data) % 32
+
+            if remainder != 0:
+                pad_len = 32 - remainder
+
+                data = np.pad(
+                    temp_data,
+                    (0, pad_len),
+                    mode='constant',
+                    constant_values=0
+                )
+            else:
+                data = temp_data
+
+        return data
+
+    def load_waveform_set(self, waveforms):
+        """ Replaces the entire waveform dictionary with the given {channel: samples} data.
+
+        Any channel not present in `waveforms` is dropped, so channels that no longer have a
+        step in the newly compiled sequence/block don't keep stale data from a previous load.
+
+        Processes all channels first and emits a single combined update instead of one signal
+        (and GUI plot refresh) per channel, which otherwise dominates the runtime for sequences
+        with many channels.
+        """
+        self.waveform = {}
+        graph_waveform = {}
+        for channel, data in waveforms.items():
+            processed = self._process_channel_data(data, channel)
+            self.waveform[channel] = processed
+            graph_waveform[channel] = processed[:min(1000000, len(processed))]
+
+        self.sigWaveformUpdated.emit(graph_waveform)
+        self.sigStatusUpdated.emit('Loaded created waveform')
+
     # -------------------------------------------------
     # Upload waveform
     # -------------------------------------------------
 
     def upload_waveform(self):
-        """ Uploads the loaded waveform into AWG memory """
-        if self.waveform is None:
+        """ Uploads the loaded waveform into AWG memory.
+
+        Any active channel that no longer has a created waveform is uploaded with zeros so
+        that stale data from a previous upload does not keep running on the hardware.
+        """
+        if not self.waveform:
             self.sigStatusUpdated.emit(
                 'No waveform loaded'
             )
@@ -183,22 +201,32 @@ class SimpleAWGLogic(LogicBase):
             digital_samples = {}
             
             max_length = max(len(wf) for wf in self.waveform.values())
-            for channel in self.waveform.keys():
-                channel_length = len(self.waveform[channel])
 
-                amplitude_factor = 1
-                if self.length_mode == 'padding':
-                    self.waveform[channel] = np.pad(
-                        self.waveform[channel],
-                        (0, max_length - channel_length),
-                        mode='constant',
-                        constant_values=0
-                    )
+            active_channels = self._awg.get_active_channels()
+            enabled_channels = {ch for ch, enabled in active_channels.items() if enabled}
+            channels_to_write = set(self.waveform.keys()) | enabled_channels
+
+            for channel in channels_to_write:
+                if channel in self.waveform:
+                    channel_length = len(self.waveform[channel])
+
+                    amplitude_factor = 1
+                    if self.length_mode == 'padding':
+                        self.waveform[channel] = np.pad(
+                            self.waveform[channel],
+                            (0, max_length - channel_length),
+                            mode='constant',
+                            constant_values=0
+                        )
+                    channel_data = amplitude_factor * self.waveform[channel]
+                else:
+                    # channel is active but has no created waveform - clear it instead of leaving stale data
+                    channel_data = np.zeros(max_length)
 
                 if 'd_' in channel:
-                    digital_samples[channel] = self.waveform[channel]
+                    digital_samples[channel] = channel_data
                 if 'a_' in channel:
-                    analog_samples[channel] = np.asarray(amplitude_factor * self.waveform[channel], dtype=np.int16)
+                    analog_samples[channel] = np.asarray(channel_data, dtype=np.int16)
 
             self._awg.write_waveform(
                 name='custom_waveform',
@@ -270,12 +298,13 @@ class SimpleAWGLogic(LogicBase):
                     'Output started'
                 )
         except Exception as err:
-            if isinstance(err, spcm.SpcmTimeout):
-                self._awg.pulser_off()
-            else:
-                self.sigStatusUpdated.emit(
-                    f'Start failed: {err}'
-                )
+            #TODO THIS ERROR NEEDS TO BE HANDLED IN THE HW, NO SPCM DEPENDENCY
+            #if isinstance(err, spcm.SpcmTimeout):
+            #    self._awg.pulser_off()
+            #else:
+            self.sigStatusUpdated.emit(
+                f'Start failed: {err}'
+            )
 
     def stop_output(self):
         try:
@@ -333,6 +362,14 @@ class SimpleAWGLogic(LogicBase):
         self.i_channel = i_channel
         self.q_channel = q_channel
 
+    def get_sample_rate(self):
+        """ Query the awg for its current sample rate """
+        return self._awg.get_sample_rate()
+
+    def set_sample_rate(self, sample_rate):
+        """ Set the awg hardware sample rate """
+        self._awg.set_sample_rate(sample_rate)
+
     def set_pulse_time(self, pulse_time):
         if not self.awg_ready:
             return
@@ -359,8 +396,7 @@ class SimpleAWGLogic(LogicBase):
             compiler = PulseCompiler(sequence, pulse_blocks, self, steps_per_iter=10000)
             waveforms = compiler.compile()
             
-            for channel in waveforms.keys():
-                self.load_waveform_file(np.array(waveforms[channel]), channel)
+            self.load_waveform_set(waveforms)
             self.upload_waveform()
             
             self.start_output()
@@ -480,14 +516,7 @@ class SimpleAWGLogic(LogicBase):
                             pass
                     variables[var[0]] = value
 
-            current_iteration = None
-            current_block_id = 0
-            current_trigger_id = 0
-
             sequence = []
-            temp_sequence = []
-            temp_indx = 0
-            max_length = 0
             num_iters = 1
             for line in lines:
                 if "%" in line:
@@ -498,11 +527,7 @@ class SimpleAWGLogic(LogicBase):
                     continue
                 elif "inline" in line:
                     continue
-                    # if current_block_id > 0:
-                        # current_trigger_id += 1
                 elif "evaluate" in line:
-                    # if current_block_id > 0:
-                        # current_trigger_id += 1
                     continue
                 elif ".pf" in line:
                     pass
@@ -525,7 +550,6 @@ class SimpleAWGLogic(LogicBase):
                         "Receive Trig": recieve,
                         "IQ Phase": phase
                     })
-                    current_block_id += 1
                     
                     if num_iters > 1:
                         num_iters = 1
@@ -548,8 +572,6 @@ class SimpleAWGLogic(LogicBase):
                         "Receive Trig": recieve,
                         "IQ Phase": phase
                     })
-                    
-                    current_block_id += 1
                     
                     if num_iters > 1:
                         num_iters = 1
@@ -593,11 +615,14 @@ class PulseCompiler:
             # Tracks how many times a step has been run
             self._step_run_tracker = {}
             self.compiled_pulses = {}
+            # Flags currently being expanded on the call stack - guards against Send/Receive Trig cycles
+            self._active_flags = set()
 
     def compile(self):
         """Starts compilation and resets local run trackers."""
         # Reset tracker for this compilation run
         self._step_run_tracker = {id(step): 0 for step in self.all_steps}
+        self._active_flags = set()
         waveform = self._compile_flag(0)
         print("Compiling Sequence Finished")
         return waveform
@@ -605,114 +630,148 @@ class PulseCompiler:
     def _compile_flag(self, flag_id):
         if flag_id not in self.steps_by_wait_flag:
             return {ch: np.array([], dtype=np.float64) for ch in self.all_channels if ch != "IQ"}
-    
-        # Use lists as temporary staging buffers for each channel
-        channel_buffers = {ch: [] for ch in self.all_channels if ch != "IQ"}
-        
+
+        if flag_id in self._active_flags:
+            # A step's Send Trig loops back to a flag already being expanded on this call stack -
+            # break the cycle instead of recursing forever.
+            self._logic.log.warning(
+                f'Sequence has a Send/Receive Trig cycle involving flag {flag_id}; skipping repeated expansion.'
+            )
+            return {ch: np.array([], dtype=np.float64) for ch in self.all_channels if ch != "IQ"}
+
+        self._active_flags.add(flag_id)
+        try:
+            return self._expand_flag(flag_id)
+        finally:
+            self._active_flags.discard(flag_id)
+
+    def _expand_flag(self, flag_id):
+        # Track (offset, array) segments per channel instead of materializing zeros for idle channels
+        channel_segments = {ch: [] for ch in self.all_channels if ch != "IQ"}
+        offset = 0
+
         for step in self.steps_by_wait_flag[flag_id]:
             step_id = id(step)
             repetitions = step.get('repetitions', 1)
-    
-            for _ in range(repetitions):
-                current_run_count = self._step_run_tracker[step_id]
-                chnl = list(step.get('channels', []))
-                used_iq = False
-                
-                if isinstance(step['block'], str):
-                    pulse_type = self.pulse_blocks[step['block']]
-                else:
-                    pulse_type = step['block']
+            chnl = list(step.get('channels', []))
+            used_iq = "IQ" in chnl
 
-                if "IQ" in chnl:
+            if isinstance(step['block'], str):
+                pulse_type = self.pulse_blocks[step['block']]
+            else:
+                pulse_type = step['block']
+
+            # A Pulses/Variable Pulses block with no increment is identical on every repetition,
+            # so the whole run can be tiled in one numpy call instead of looping in Python per rep
+            is_static = pulse_type[0] in ("Pulses", "Variable Pulses") and pulse_type[3] == 0 and pulse_type[4] == 0
+
+            if is_static:
+                current_run_count = self._step_run_tracker[step_id]
+
+                if used_iq:
                     if len(chnl) > 1:
                         pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
                         standard_pulse = self.compile_pulse(pulse_type, current_run_count)
                     else:
                         pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
-                    used_iq = True
                 else:
-                    if isinstance(step['block'], list):
-                        if ','.join(map(str, step['block'])) in self.compiled_pulses.keys():
-                            pulse_shape = self.compiled_pulses[','.join(map(str, step['block']))]
-                        else:
-                            pulse_shape = self.compile_pulse(pulse_type, current_run_count)
-                            if pulse_type[3] != 0 or pulse_type[4] != 0:
-                                if isinstance(step['block'], list):
-                                    self.compiled_pulses[','.join(map(str, step['block']))] = pulse_shape
-                    else:
-                        if step['block'] in self.compiled_pulses.keys():
-                            pulse_shape = self.compiled_pulses[step['block']]
-                        else:
-                            pulse_shape = self.compile_pulse(pulse_type, current_run_count)
-                            if pulse_type[3] != 0 or pulse_type[4] != 0:
-                                self.compiled_pulses[step['block']] = pulse_shape
-    
-                self._step_run_tracker[step_id] += 1
-                
-                # Determine exact length
-                pulse_len = len(pulse_shape[0]) if used_iq else len(pulse_shape)
+                    pulse_shape = self._get_cached_pulse(step['block'], pulse_type, current_run_count)
 
-                # Build iteration waveforms as standard dict of arrays
-                iter_waveforms = {}
+                self._step_run_tracker[step_id] += repetitions
+
                 if used_iq:
                     i_pulse, q_pulse = pulse_shape[0], pulse_shape[1]
-                    for ch in self.all_channels:
-                        if ch == self._logic.i_channel:
-                            iter_waveforms[ch] = i_pulse
-                        elif ch == self._logic.q_channel:
-                            iter_waveforms[ch] = q_pulse
-                        elif ch in chnl:
-                            iter_waveforms[ch] = standard_pulse
-                        else:
-                            iter_waveforms[ch] = np.zeros(pulse_len, dtype=np.float64)
+                    pulse_len = len(i_pulse)
+                    if repetitions > 1:
+                        i_pulse = np.tile(i_pulse, repetitions)
+                        q_pulse = np.tile(q_pulse, repetitions)
+                    if self._logic.i_channel in channel_segments:
+                        channel_segments[self._logic.i_channel].append((offset, i_pulse))
+                    if self._logic.q_channel in channel_segments:
+                        channel_segments[self._logic.q_channel].append((offset, q_pulse))
+                    if len(chnl) > 1:
+                        standard_tiled = np.tile(standard_pulse, repetitions) if repetitions > 1 else standard_pulse
+                        for ch in chnl:
+                            if ch != "IQ" and ch in channel_segments:
+                                channel_segments[ch].append((offset, standard_tiled))
                 else:
-                    for ch in self.all_channels:
-                        if ch in chnl:
-                            iter_waveforms[ch] = pulse_shape
+                    pulse_len = len(pulse_shape)
+                    tiled = np.tile(pulse_shape, repetitions) if repetitions > 1 else pulse_shape
+                    for ch in chnl:
+                        if ch in channel_segments:
+                            channel_segments[ch].append((offset, tiled))
+
+                offset += pulse_len * repetitions
+            else:
+                for _ in range(repetitions):
+                    current_run_count = self._step_run_tracker[step_id]
+
+                    if used_iq:
+                        if len(chnl) > 1:
+                            pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
+                            standard_pulse = self.compile_pulse(pulse_type, current_run_count)
                         else:
-                            iter_waveforms[ch] = np.zeros(pulse_len, dtype=np.float64)
+                            pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
+                    else:
+                        pulse_shape = self._get_cached_pulse(step['block'], pulse_type, current_run_count)
 
-                # Accumulate current iteration waveforms into channel buffers
-                for ch in channel_buffers:
-                    if ch in iter_waveforms and iter_waveforms[ch].size > 0:
-                        channel_buffers[ch].append(iter_waveforms[ch])
+                    self._step_run_tracker[step_id] += 1
 
-                # Handle recursive nested sequences cleanly by pushing child arrays into buffers too
-                send_flag = step.get('Send Trig', 0)
-                if send_flag != 0 and send_flag in self.steps_by_wait_flag:
-                    child_waveforms = self._compile_flag(send_flag)
-                    for ch in channel_buffers:
-                        if ch in child_waveforms and child_waveforms[ch].size > 0:
-                            channel_buffers[ch].append(child_waveforms[ch])
+                    # Determine exact length
+                    pulse_len = len(pulse_shape[0]) if used_iq else len(pulse_shape)
 
-        # Find the maximum length across all accumulated blocks for uniform padding
-        max_len = 0
-        channel_arrays = {}
-        for ch, buf in channel_buffers.items():
-            if buf:
-                total_len = sum(seg.size for seg in buf)
-                if total_len > max_len:
-                    max_len = total_len
+                    # Only record segments for channels actually carrying data this iteration; idle
+                    # channels are left as zeros in the final array instead of being allocated here
+                    if used_iq:
+                        i_pulse, q_pulse = pulse_shape[0], pulse_shape[1]
+                        if self._logic.i_channel in channel_segments:
+                            channel_segments[self._logic.i_channel].append((offset, i_pulse))
+                        if self._logic.q_channel in channel_segments:
+                            channel_segments[self._logic.q_channel].append((offset, q_pulse))
+                        for ch in chnl:
+                            if ch != "IQ" and ch in channel_segments:
+                                channel_segments[ch].append((offset, standard_pulse))
+                    else:
+                        for ch in chnl:
+                            if ch in channel_segments:
+                                channel_segments[ch].append((offset, pulse_shape))
 
-        # Final single-allocation pass per channel
+                    offset += pulse_len
+
+            # Trigger the linked child sequence only once, after all repetitions of this step finish
+            send_flag = step.get('Send Trig', 0)
+            if send_flag != 0 and send_flag in self.steps_by_wait_flag:
+                child_waveforms = self._compile_flag(send_flag)
+                child_len = 0
+                for ch, arr in child_waveforms.items():
+                    if arr.size > 0:
+                        channel_segments.setdefault(ch, []).append((offset, arr))
+                        child_len = max(child_len, arr.size)
+                offset += child_len
+
+        max_len = offset
+
+        # Final single-allocation pass per channel: zero-fill then write only the real segments
         flag_waveforms = {}
-        for ch, buf in channel_buffers.items():
-            if not buf:
-                flag_waveforms[ch] = np.array([], dtype=np.float64)
-                continue
-            
-            total_len = sum(seg.size for seg in buf)
+        for ch, segments in channel_segments.items():
             master_arr = np.zeros(max_len, dtype=np.float64)
-            
-            current_idx = 0
-            for seg in buf:
-                end_idx = current_idx + seg.size
-                master_arr[current_idx:end_idx] = seg
-                current_idx = end_idx
-                
+            for seg_offset, seg in segments:
+                master_arr[seg_offset:seg_offset + seg.size] = seg
             flag_waveforms[ch] = master_arr
 
-        return flag_flag_waveforms if 'flag_flag_waveforms' in locals() else flag_waveforms
+        return flag_waveforms
+
+    def _get_cached_pulse(self, block_key, pulse_type, current_run_count):
+        """ Compiles a non-IQ pulse, reusing a cached result for blocks with no length increment """
+        cache_key = ','.join(map(str, block_key)) if isinstance(block_key, list) else block_key
+
+        if cache_key in self.compiled_pulses:
+            return self.compiled_pulses[cache_key]
+
+        pulse_shape = self.compile_pulse(pulse_type, current_run_count)
+        if pulse_type[3] == 0 and pulse_type[4] == 0:
+            self.compiled_pulses[cache_key] = pulse_shape
+        return pulse_shape
 
     def compile_pulse(self, pulse_parameters, iters=0, iq_phase=0, iq_out=False):
 
@@ -732,16 +791,16 @@ class PulseCompiler:
                 pulse_amplitude = pulse_parameters[5]
             else:
                 pulse_amplitude = 1
-            waveform = []
-    
-            waveform.extend(np.ones( int(pulse_length + pulse_step_size*(iters // self.steps_per_iter) )) )
-            waveform.extend(np.zeros( int(pause_length + pause_step_size*(iters // self.steps_per_iter) )) )
+
+            num_pulse_samples = int(pulse_length + pulse_step_size*(iters // self.steps_per_iter))
+            num_pause_samples = int(pause_length + pause_step_size*(iters // self.steps_per_iter))
+            waveform = np.concatenate((np.ones(num_pulse_samples), np.zeros(num_pause_samples)))
             
             if iq_out:
                 # Scale to accomodate the phase from IQ
-                return [pulse_amplitude * np.cos(np.radians(iq_phase))*np.array(waveform), pulse_amplitude * np.sin(np.radians(iq_phase))*np.array(waveform)] 
+                return [pulse_amplitude * np.cos(np.radians(iq_phase))*waveform, pulse_amplitude * np.sin(np.radians(iq_phase))*waveform] 
             else:
-                return pulse_amplitude * np.array(waveform)
+                return pulse_amplitude * waveform
         elif pulse_type == "Frequency Sweep": # Trigometric identity: cos(2 pi df t)cos(2 pi f_c t) - sin(2 pi df t)sin( 2 pi f_c t) = cos(2 pi (f_c + df) t)
             duration = pulse_parameters[1] #duration scaled to ns
             steps = pulse_parameters[4] #self.sweep_steps.value()
@@ -749,7 +808,6 @@ class PulseCompiler:
 
             pts_per_step = int(self.fs * duration)
 
-            current_phase = 0.0
             dt = 1.0 / self.fs
             
             start_idx = 0
@@ -773,6 +831,7 @@ class PulseCompiler:
                 
                 return [cos_signal, sin_signal]
             else: # Sweep should be done using IQ can be changed if needed
-                return np.empty(pts_per_step)
+                self._logic.log.warning('Frequency sweep called on non-IQ channel non supported, returning zeros')
+                return np.zeros(pts_per_step)
         else:
             return pulse_parameters[1]

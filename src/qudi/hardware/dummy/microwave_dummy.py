@@ -50,6 +50,8 @@ class MicrowaveDummy(MicrowaveInterface):
         self._scan_sample_rate = -1.
         self._scan_mode = SamplingOutputMode.JUMP_LIST
         self._is_scanning = False
+        self._output_active = False
+        self._modulation_active = False
         self._frequency = None
         self._scan_idx = 0
 
@@ -182,6 +184,7 @@ class MicrowaveDummy(MicrowaveInterface):
             self.log.debug('Stopping microwave output')
             time.sleep(0.5)
             self._is_scanning = False
+            self._output_active = False
             self.module_state.unlock()
 
     def set_cw(self, frequency=None, power=None):
@@ -206,9 +209,11 @@ class MicrowaveDummy(MicrowaveInterface):
             if frequency is not None:
                 self._cw_frequency = frequency
                 self.log.debug(f'Setting CW frequency to {frequency:.9e} Hz')
+            self._modulation_active=False
 
     def set_pulsed(self, frequency=None, power=None):
         self.log.debug('Setting up pulsed')
+        self._modulation_active=True
         self.set_cw(frequency,power)
             
 
@@ -224,6 +229,7 @@ class MicrowaveDummy(MicrowaveInterface):
                 time.sleep(0.5)
                 self._is_scanning = False
                 self.module_state.lock()
+                self._output_active = True
             elif self._is_scanning:
                 raise RuntimeError(
                     'Unable to start microwave CW output. Frequency scanning in progress.'
@@ -304,3 +310,11 @@ class MicrowaveDummy(MicrowaveInterface):
                 self._frequency = self._scan_frequencies[0]
                 self.log.debug('Frequency scan soft reset')
                 time.sleep(0.1)
+
+    @property
+    def output_active(self):
+        return self._output_active
+
+    @property
+    def modulation_active(self):
+        return self._modulation_active

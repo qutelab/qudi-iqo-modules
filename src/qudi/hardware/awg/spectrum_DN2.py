@@ -141,7 +141,7 @@ class AWG_DN2(PulserInterface):
 
     def reset(self):
         if self.connected:
-            self.netbox.reset()
+            self.awg.reset()
             self.log.debug('Netbox AWG has been reset')
 
     def get_constraints(self):
@@ -151,7 +151,7 @@ class AWG_DN2(PulserInterface):
         constraints.waveform_format = ['wfm']
         constraints.sequence_format = ['seq']
 
-        constraints.sample_rate.min = 10.0e6
+        constraints.sample_rate.min = 1
         constraints.sample_rate.max = 1.25e9
         constraints.sample_rate.step = 1.0e6
         constraints.sample_rate.default = 1.25e8
@@ -173,7 +173,7 @@ class AWG_DN2(PulserInterface):
         activation_config = dict()
 
         activation_config['all'] = frozenset({'a_ch1', 'a_ch2', 'a_ch3', 
-                                              'a_ch4', 'd_ch1', 'd_ch2', 'd_ch3', 'd_ch4', 'd_ch5', 'c_ch6'})
+                                              'a_ch4', 'd_ch1', 'd_ch2', 'd_ch3', 'd_ch4', 'd_ch5', 'd_ch6'})
         activation_config['one_d'] = frozenset({'d_ch1'})
         activation_config['one'] = frozenset({'a_ch1', 'd_ch1'})
         activation_config['two'] = frozenset({'a_ch1', 'a_ch2', 'd_ch1'})
@@ -219,8 +219,11 @@ class AWG_DN2(PulserInterface):
     
     def disable_channel(self, chnls):
 
-        configs = self.constraints.activation_config
-        active_names = configs[config_name]
+        if isinstance(chnls, str):
+            configs = self.constraints.activation_config
+            active_names = configs[chnls]
+        else:
+            active_names = chnls
     
         # disable requested channels
         for analog_name in active_names:

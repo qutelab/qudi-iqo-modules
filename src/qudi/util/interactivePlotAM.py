@@ -483,11 +483,11 @@ class InteractivePlot(pg.PlotWidget):
         x_raw = self._snap_line.current_x()
         y_raw = self._snap_line.current_y()
         if np.isfinite(x_raw):
-            x = '{:.3r}'.format(ScaledFloat(x_raw))
+            x = '{:.6r}'.format(ScaledFloat(x_raw))
         else:
             x = 'nan'
         if np.isfinite(y_raw):
-            y = '{:.3r}'.format(ScaledFloat(y_raw))
+            y = '{:.6r}'.format(ScaledFloat(y_raw))
         else:
             y = 'nan'
         self._status_item.setText(

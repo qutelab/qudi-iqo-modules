@@ -7,8 +7,8 @@ from qudi.core.module import Base
 from qudi.core.configoption import ConfigOption
 from qudi.interface.pulser_interface import PulserInterface, PulserConstraints, SequenceOption
 
-import spcm
-from spcm import units
+# import spcm
+# from spcm import units
 
 class AWG_Dummy(PulserInterface):
     """ A hardware module for Spectrum DN2-66X abitrary wave generator
@@ -16,7 +16,7 @@ class AWG_Dummy(PulserInterface):
         Example Config:
         
         spectrum_awg:
-            module.Class: 'awg.spectrum_DN2.AWG_DN2'
+            module.Class: 'awg.spectrum_dummy.AWG_Dummy'
             options:
                 awg_ip_address: ''
                 timeout: 0
@@ -228,18 +228,19 @@ class AWG_Dummy(PulserInterface):
                 # self.card_channels[card_idx][phys_ch].enable(False)
 
     def init_card(self, index):
-        card = self.awg.cards[index]
-        card.card_mode(spcm.SPC_REP_STD_CONTINUOUS)
+        pass
+        # card = self.awg.cards[index]
+        # card.card_mode(spcm.SPC_REP_STD_CONTINUOUS)
 
-        if self.reps != 0:
-            # card.card_mode(spcm.SPC_REP_STD_SINGLE)
-            card.loops(self.reps)
-        else:
-            # card.card_mode(spcm.SPC_REP_STD_CONTINUOUS)
-            card.loops(0)
+        # if self.reps != 0:
+        #     # card.card_mode(spcm.SPC_REP_STD_SINGLE)
+        #     card.loops(self.reps)
+        # else:
+        #     # card.card_mode(spcm.SPC_REP_STD_CONTINUOUS)
+        #     card.loops(0)
     
-        clock = spcm.Clock(card)
-        clock.sample_rate(self._sample_rate * units.Hz)
+        # clock = spcm.Clock(card)
+        # clock.sample_rate(self._sample_rate * units.Hz)
 
     def pulser_on(self):
         # activation_dict = self.get_active_channels()
@@ -305,28 +306,29 @@ class AWG_Dummy(PulserInterface):
                              respective asset loaded into the channel,
                              string describing the asset type ('waveform' or 'sequence')
         """
-        # Get all active channels
-        chnl_activation = self.get_active_channels()
+        return None, None
+        # # Get all active channels
+        # chnl_activation = self.get_active_channels()
 
-        channel_numbers = sorted(int(chnl.split('_ch')[1]) for chnl in chnl_activation if
-                                 chnl.startswith('a') and chnl_activation[chnl])
-        # Get assets per channel
-        loaded_assets = dict()
-        current_type = None
+        # channel_numbers = sorted(int(chnl.split('_ch')[1]) for chnl in chnl_activation if
+        #                          chnl.startswith('a') and chnl_activation[chnl])
+        # # Get assets per channel
+        # loaded_assets = dict()
+        # current_type = None
 
-        run_mode = self.awg.cards[0].card_mode()
-        if run_mode == spcm.SPC_REP_STD_CONTINUOUS:
-            current_type = 'waveform'
-            for chnl_num in channel_numbers:
-                loaded_assets[chnl_num] = self.saved_waveforms.get(chnl_num, "")
+        # run_mode = self.awg.cards[0].card_mode()
+        # if run_mode == spcm.SPC_REP_STD_CONTINUOUS:
+        #     current_type = 'waveform'
+        #     for chnl_num in channel_numbers:
+        #         loaded_assets[chnl_num] = self.saved_waveforms.get(chnl_num, "")
 
-        elif run_mode == spcm.SPC_REP_STD_SEQUENCE:
-            current_type = 'sequence'
-            for chnl_num in channel_numbers:
-                if len(self.saved_sequences) > 0:
-                    loaded_assets[chnl_num] = self.saved_sequences[0]
+        # elif run_mode == spcm.SPC_REP_STD_SEQUENCE:
+        #     current_type = 'sequence'
+        #     for chnl_num in channel_numbers:
+        #         if len(self.saved_sequences) > 0:
+        #             loaded_assets[chnl_num] = self.saved_sequences[0]
 
-        return loaded_assets, current_type
+        # return loaded_assets, current_type
 
     def clear_all(self):
         pass
