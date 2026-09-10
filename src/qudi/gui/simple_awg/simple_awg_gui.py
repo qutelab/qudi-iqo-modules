@@ -1465,13 +1465,13 @@ class SimpleAWGGui(GuiBase):
         pulse_time = ScienDSpinBox()
         pulse_time.setMinimum(0)
         pulse_time.setSuffix('s')
-        pulse_time.setValue(10e-9)
+        pulse_time.setValue(0)
         self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
 
         idle_time = ScienDSpinBox()
         idle_time.setMinimum(0)
         idle_time.setSuffix('s')
-        idle_time.setValue(10e-9)
+        idle_time.setValue(0)
         self.pulse_sequence_table.setCellWidget(row, 1, idle_time)
 
         channel_widget = ChannelWidget(["IQ"] + self.available_channels)

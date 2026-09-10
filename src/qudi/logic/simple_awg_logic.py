@@ -623,13 +623,27 @@ class PulseCompiler:
         # Reset tracker for this compilation run
         self._step_run_tracker = {id(step): 0 for step in self.all_steps}
         self._active_flags = set()
-        waveform = self._compile_flag(0)
-        print("Compiling Sequence Finished")
-        return waveform
+        # Segments are collected in one shared structure so that steps sharing a Receive Trig
+        # (i.e. running concurrently) write to the same starting offset instead of queuing up
+        self._channel_segments = {ch: [] for ch in self.all_channels if ch != "IQ"}
+        self._max_len = 0
 
-    def _compile_flag(self, flag_id):
+        self._compile_flag(0, 0)
+
+        # Final single-allocation pass per channel: zero-fill then write only the real segments
+        flag_waveforms = {}
+        for ch, segments in self._channel_segments.items():
+            master_arr = np.zeros(self._max_len, dtype=np.float64)
+            for seg_offset, seg in segments:
+                master_arr[seg_offset:seg_offset + seg.size] = seg
+            flag_waveforms[ch] = master_arr
+
+        print("Compiling Sequence Finished")
+        return flag_waveforms
+
+    def _compile_flag(self, flag_id, start_offset):
         if flag_id not in self.steps_by_wait_flag:
-            return {ch: np.array([], dtype=np.float64) for ch in self.all_channels if ch != "IQ"}
+            return
 
         if flag_id in self._active_flags:
             # A step's Send Trig loops back to a flag already being expanded on this call stack -
@@ -637,24 +651,23 @@ class PulseCompiler:
             self._logic.log.warning(
                 f'Sequence has a Send/Receive Trig cycle involving flag {flag_id}; skipping repeated expansion.'
             )
-            return {ch: np.array([], dtype=np.float64) for ch in self.all_channels if ch != "IQ"}
+            return
 
         self._active_flags.add(flag_id)
         try:
-            return self._expand_flag(flag_id)
+            self._expand_flag(flag_id, start_offset)
         finally:
             self._active_flags.discard(flag_id)
 
-    def _expand_flag(self, flag_id):
-        # Track (offset, array) segments per channel instead of materializing zeros for idle channels
-        channel_segments = {ch: [] for ch in self.all_channels if ch != "IQ"}
-        offset = 0
-
+    def _expand_flag(self, flag_id, start_offset):
+        # Every step waiting on this flag starts at the same offset (they run concurrently);
+        # each step's own Send Trig chain is anchored independently to that step's own end offset
         for step in self.steps_by_wait_flag[flag_id]:
             step_id = id(step)
             repetitions = step.get('repetitions', 1)
             chnl = list(step.get('channels', []))
             used_iq = "IQ" in chnl
+            offset = start_offset
 
             if isinstance(step['block'], str):
                 pulse_type = self.pulse_blocks[step['block']]
@@ -685,21 +698,21 @@ class PulseCompiler:
                     if repetitions > 1:
                         i_pulse = np.tile(i_pulse, repetitions)
                         q_pulse = np.tile(q_pulse, repetitions)
-                    if self._logic.i_channel in channel_segments:
-                        channel_segments[self._logic.i_channel].append((offset, i_pulse))
-                    if self._logic.q_channel in channel_segments:
-                        channel_segments[self._logic.q_channel].append((offset, q_pulse))
+                    if self._logic.i_channel in self._channel_segments:
+                        self._channel_segments[self._logic.i_channel].append((offset, i_pulse))
+                    if self._logic.q_channel in self._channel_segments:
+                        self._channel_segments[self._logic.q_channel].append((offset, q_pulse))
                     if len(chnl) > 1:
                         standard_tiled = np.tile(standard_pulse, repetitions) if repetitions > 1 else standard_pulse
                         for ch in chnl:
-                            if ch != "IQ" and ch in channel_segments:
-                                channel_segments[ch].append((offset, standard_tiled))
+                            if ch != "IQ" and ch in self._channel_segments:
+                                self._channel_segments[ch].append((offset, standard_tiled))
                 else:
                     pulse_len = len(pulse_shape)
                     tiled = np.tile(pulse_shape, repetitions) if repetitions > 1 else pulse_shape
                     for ch in chnl:
-                        if ch in channel_segments:
-                            channel_segments[ch].append((offset, tiled))
+                        if ch in self._channel_segments:
+                            self._channel_segments[ch].append((offset, tiled))
 
                 offset += pulse_len * repetitions
             else:
@@ -724,42 +737,28 @@ class PulseCompiler:
                     # channels are left as zeros in the final array instead of being allocated here
                     if used_iq:
                         i_pulse, q_pulse = pulse_shape[0], pulse_shape[1]
-                        if self._logic.i_channel in channel_segments:
-                            channel_segments[self._logic.i_channel].append((offset, i_pulse))
-                        if self._logic.q_channel in channel_segments:
-                            channel_segments[self._logic.q_channel].append((offset, q_pulse))
+                        if self._logic.i_channel in self._channel_segments:
+                            self._channel_segments[self._logic.i_channel].append((offset, i_pulse))
+                        if self._logic.q_channel in self._channel_segments:
+                            self._channel_segments[self._logic.q_channel].append((offset, q_pulse))
                         for ch in chnl:
-                            if ch != "IQ" and ch in channel_segments:
-                                channel_segments[ch].append((offset, standard_pulse))
+                            if ch != "IQ" and ch in self._channel_segments:
+                                self._channel_segments[ch].append((offset, standard_pulse))
                     else:
                         for ch in chnl:
-                            if ch in channel_segments:
-                                channel_segments[ch].append((offset, pulse_shape))
+                            if ch in self._channel_segments:
+                                self._channel_segments[ch].append((offset, pulse_shape))
 
                     offset += pulse_len
 
-            # Trigger the linked child sequence only once, after all repetitions of this step finish
+            step_end = offset
+            self._max_len = max(self._max_len, step_end)
+
+            # Continue this step's own chain independently - other steps sharing this flag start
+            # at the same offset but may finish (and trigger their own next step) at a different time
             send_flag = step.get('Send Trig', 0)
             if send_flag != 0 and send_flag in self.steps_by_wait_flag:
-                child_waveforms = self._compile_flag(send_flag)
-                child_len = 0
-                for ch, arr in child_waveforms.items():
-                    if arr.size > 0:
-                        channel_segments.setdefault(ch, []).append((offset, arr))
-                        child_len = max(child_len, arr.size)
-                offset += child_len
-
-        max_len = offset
-
-        # Final single-allocation pass per channel: zero-fill then write only the real segments
-        flag_waveforms = {}
-        for ch, segments in channel_segments.items():
-            master_arr = np.zeros(max_len, dtype=np.float64)
-            for seg_offset, seg in segments:
-                master_arr[seg_offset:seg_offset + seg.size] = seg
-            flag_waveforms[ch] = master_arr
-
-        return flag_waveforms
+                self._compile_flag(send_flag, step_end)
 
     def _get_cached_pulse(self, block_key, pulse_type, current_run_count):
         """ Compiles a non-IQ pulse, reusing a cached result for blocks with no length increment """
