@@ -189,6 +189,16 @@ class FiniteSamplingInputDummy(FiniteSamplingInputInterface):
                     )
                 self.module_state.unlock()
 
+    def continue_buffered_acquisition(self):
+        # ToDo: discriminate between different types of data
+        if self._simulation_mode is SimulationMode.ODMR:
+            self.__simulate_odmr(self._frame_size)
+        elif self._simulation_mode is SimulationMode.RANDOM:
+            self.__simulate_random(self._frame_size)
+
+        self.__returned_samples = 0
+        self.__start_time = time.time()
+
     def get_buffered_samples(self, number_of_samples=None):
         with self._thread_lock:
             available_samples = self.samples_in_buffer
@@ -214,7 +224,7 @@ class FiniteSamplingInputDummy(FiniteSamplingInputInterface):
             self.__returned_samples += number_of_samples
             return data
 
-    def acquire_frame(self, frame_size=None):
+    def acquire_frame(self, frame_size=None, continue_acquiring=False):
         with self._thread_lock:
             if frame_size is None:
                 buffered_frame_size = None
@@ -222,12 +232,20 @@ class FiniteSamplingInputDummy(FiniteSamplingInputInterface):
                 buffered_frame_size = self._frame_size
                 self.set_frame_size(frame_size)
 
-            self.start_buffered_acquisition()
-            data = self.get_buffered_samples(self._frame_size)
-            self.stop_buffered_acquisition()
+            if self.module_state() == 'idle':
+                self.start_buffered_acquisition()
+            elif continue_acquiring:
+                self.continue_buffered_acquisition()
+            else:
+                raise RuntimeError('Cannot acquire frame, acquisition already running and continue_acquiring not enabled')
+
+            data = self.get_buffered_samples(self.frame_size)
 
             if buffered_frame_size is not None:
                 self._frame_size = buffered_frame_size
+
+            if not continue_acquiring:
+                self.stop_buffered_acquisition()
             return data
 
     def __simulate_random(self, length):

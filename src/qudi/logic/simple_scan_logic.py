@@ -288,13 +288,14 @@ class SimpleScanLogic(LogicBase):
             self.sleep(wait_time)
             try:
                 #self.result = self.scanner().get_buffered_samples(self.scanner().frame_size)
-                self.result = self.scanner().acquire_frame()
+                self.result = self.scanner().acquire_frame(continue_acquiring=True)
                 self._running = False
                 self.sigWorkerFinished.emit(None)
             except Exception as e:
                 self.result=None
                 self._running = False
                 self.sigWorkerFinished.emit(e)
+
             
             
     #Begin SimpleScanLogic main code
@@ -692,6 +693,7 @@ class SimpleScanLogic(LogicBase):
         with self._threadlock:
             if self.module_state() == 'locked':
                 self.module_state.unlock()  #Stop scanning before turning off device.
+            self._data_scanner().stop_buffered_acquisition()
             try:
                 self.device_dict[self._device_select].end_scan()
             except Exception as e:

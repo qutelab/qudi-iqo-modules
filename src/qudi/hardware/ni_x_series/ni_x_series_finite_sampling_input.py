@@ -32,7 +32,7 @@ from qudi.util.mutex import RecursiveMutex
 from qudi.core.configoption import ConfigOption
 from qudi.util.helpers import natural_sort
 from qudi.interface.finite_sampling_input_interface import FiniteSamplingInputInterface, FiniteSamplingInputConstraints
-from time import time
+from time import perf_counter
 
 
 
@@ -452,6 +452,40 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.terminate_all_tasks()
             self.module_state.unlock()
 
+    def continue_buffered_acquisition(self):
+        if self.module_state() != 'locked':
+            raise RuntimeError('Continue acquisition called but acquisition not started yet')
+
+        # start tasks
+        if len(self._di_task_handles) > 0:
+            try:
+                for task in self._di_task_handles:
+                    task.stop()
+                    task.start()
+            except ni.DaqError:
+                self.terminate_all_tasks()
+                self.module_state.unlock()
+                raise
+
+        if self._ai_task_handle is not None:
+            try:
+                self._ai_task_handle.stop()
+                self._ai_task_handle.start()
+            except ni.DaqError:
+                self.terminate_all_tasks()
+                self.module_state.unlock()
+                raise
+
+        if not self._sample_on_external_clock:
+            try:
+                self._clk_task_handle.stop()
+                self._clk_task_handle.start()
+            except ni.DaqError:
+                self.terminate_all_tasks()
+                self.module_state.unlock()
+                raise
+
+
     def get_buffered_samples(self, number_of_samples=None,debug_time=False):
         """ Returns a chunk of the current data frame for all active channels read from the frame
         buffer.
@@ -506,14 +540,14 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 data_buffer = np.zeros(number_of_samples, dtype=np.uint32)
                 # read the counter value. This function is blocking.
                 if debug_time:
-                    t0 = time()
+                    t0 = perf_counter()
 
                 read_samples = reader.read_many_sample_uint32(
                     data_buffer,
                     number_of_samples_per_channel=number_of_samples,
                     timeout=self._rw_timeout)
                 if debug_time:
-                    print('Acq time taken',(time()-t0)*1e3,'ms')
+                    print('Acq time taken',(perf_counter()-t0)*1e3,'ms')
                 # if read_samples != number_of_samples: # Is this a silent error?
                 #     return data
                 #data_buffer = data_buffer[1:] # If using Reset, Remove first sample since it is always 0
@@ -539,7 +573,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             return data
         return data
 
-    def acquire_frame(self, frame_size=None):
+    def acquire_frame(self, frame_size=None, continue_acquiring=False, debug_time=False):
         """ Acquire a single data frame for all active channels.
         This method call is blocking until the entire data frame has been acquired.
 
@@ -550,6 +584,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
         for more details.
 
         @param int frame_size: optional, the number of samples to acquire in this frame
+        continue_acquiring: If True, won't call stop_buffered acquisition. Make sure to call this at end of acquisition sequence.
 
         @return dict: Sample arrays (values) for each active channel (keys)
         """
@@ -560,12 +595,34 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 buffered_frame_size = self._frame_size
                 self.set_frame_size(frame_size)
 
-            self.start_buffered_acquisition()
+            # if debug_time:
+            #     t0=perf_counter()
+            # self.start_buffered_acquisition()
+            # if debug_time:
+            #     t1=perf_counter()
+            # data = self.get_buffered_samples(self.frame_size)
+            # if debug_time:
+            #     t2=perf_counter()
+            # self.stop_buffered_acquisition()
+            # if debug_time:
+            #     t3=perf_counter()
+            #     print('Acquire times',np.diff([t0,t1,t2,t3])*1000)
+
+
+            if self.module_state() == 'idle':
+                self.start_buffered_acquisition()
+            elif continue_acquiring:
+                self.continue_buffered_acquisition()
+            else:
+                raise RuntimeError('Cannot acquire frame, acquisition already running and continue_acquiring not enabled')
+
             data = self.get_buffered_samples(self.frame_size)
-            self.stop_buffered_acquisition()
 
             if buffered_frame_size is not None:
                 self._frame_size = buffered_frame_size
+
+            if not continue_acquiring:
+                self.stop_buffered_acquisition()
             return data
 
     # =============================================================================================
