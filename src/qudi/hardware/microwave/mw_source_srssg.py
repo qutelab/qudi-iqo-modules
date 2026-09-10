@@ -234,8 +234,8 @@ class MicrowaveSRSSG(MicrowaveInterface):
                 self._write('STYP 0')
             if frequency is not None:
                 self._write(f'FREQ {frequency:e}')
-            elif self.cw_frequency<1e6:
-                self.cw_frequency=1e6  #Minimum frequency for RF output
+            elif float(self._device.query('FREQ?'))<1e6:  #Need to use manual query/write due to thread lock.
+                self._write(f'FREQ 1e6')  #Minimum frequency for RF output
             if power is not None:
                 self._write(f'AMPR {power:f}')
             self._pulse_enabled=False
@@ -256,8 +256,8 @@ class MicrowaveSRSSG(MicrowaveInterface):
                 # self._write('STYP 0')
             if frequency is not None:
                 self._write(f'FREQ {frequency:e}')
-            elif self.cw_frequency<1e6:
-                self.cw_frequency=1e6  #Minimum frequency for RF output
+            elif float(self._device.query('FREQ?'))<1e6:  #Need to use manual query/write due to thread lock.
+                self._write(f'FREQ 1e6')  #Minimum frequency for RF output
             if power is not None:
                 self._write(f'AMPR {power:f}')
             
@@ -291,7 +291,8 @@ class MicrowaveSRSSG(MicrowaveInterface):
             self._write('ENBR 0')
             while self.output_active:
                 time.sleep(0.1)
-            self.module_state.unlock()
+            if self.module_state() != 'idle':
+                self.module_state.unlock()
 
     def cw_on(self):
         """ Switches on cw microwave output.
