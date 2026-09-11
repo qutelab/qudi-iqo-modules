@@ -7,8 +7,8 @@ from qudi.core.module import Base
 from qudi.core.configoption import ConfigOption
 from qudi.interface.pulser_interface import PulserInterface, PulserConstraints, SequenceOption
 
-import spcm
-from spcm import units
+import spcm # type: ignore
+from spcm import units # type: ignore
 
 class AWG_DN2(PulserInterface):
     """ A hardware module for Spectrum DN2-66X abitrary wave generator

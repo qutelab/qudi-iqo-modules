@@ -22,6 +22,7 @@ import os
 #import importlib
 #import sys
 import numpy as np
+import time
 
 
 class SimpleAWGGui(GuiBase):
@@ -48,6 +49,7 @@ class SimpleAWGGui(GuiBase):
     save_filepath = ConfigOption('save_path')
 
     NEW_SEQUENCE_LABEL = 'New Sequence'
+    DEFAULT_SAMPLE_RATE = 1e9
 
     def on_activate(self):
 
@@ -130,7 +132,9 @@ class SimpleAWGGui(GuiBase):
         self.pulse_plot = pg.PlotWidget()
 
         self.plot_widget.setLabel('left', 'Amplitude')
-        self.plot_widget.setLabel('bottom', 'Sample')
+        self.plot_widget.setLabel('bottom', 'Time (s)')
+
+        #self.plot_widget.getPlotItem().setDownsampling(auto=True, method='peak')
 
         # ----------------------------------------
         # Waveform tab Buttons and Inputs
@@ -781,20 +785,25 @@ class SimpleAWGGui(GuiBase):
         pulse_sequence_layout = QVBoxLayout(self.pulse_sequencer_tab)
 
         self.pulse_sequence_table = QTableWidget()
-        self.pulse_sequence_table.setColumnCount(6)
+        self.rebuild_pulse_sequence_table([])
 
-        self.pulse_sequence_table.setHorizontalHeaderLabels([
-            "Pulse Time",
-            "Idle Time",
-            "Channels",
-            "Repetitions",
-            "Start After Step",
-            "IQ Phase"
-        ])
+        if False:
+            self.pulse_sequence_table.setColumnCount(8)
 
-        self.pulse_sequence_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.Stretch
-        )
+            self.pulse_sequence_table.setHorizontalHeaderLabels([
+                "Pulse Time",
+                "Pulse Var",
+                "Idle Time",
+                "Idle Var",
+                "Channels",
+                "Repetitions",
+                "Start After Step",
+                "IQ Phase"
+            ])
+
+            self.pulse_sequence_table.horizontalHeader().setSectionResizeMode(
+                2, QHeaderView.Stretch
+            )
 
         pulse_seq_add_btn = QPushButton("Add Step")
         pulse_seq_remove_btn = QPushButton("Remove Step")
@@ -900,11 +909,9 @@ class SimpleAWGGui(GuiBase):
     # -------------------------------------------------
 
     @QtCore.Slot(object)
-    def update_plot(self, waveform_dict):
+    def update_plot(self):
         """Loads waveform from logic and then refresh plot """
-
         self._waveform_dict = self._logic.waveform
-    
         self.refresh_plot()
 
     def refresh_plot(self):
@@ -918,7 +925,6 @@ class SimpleAWGGui(GuiBase):
         if hasattr(self, 'block_name_edit'):
             selected_block = self.block_name_edit.text()
         
-        max_length = 10000000 # For preformance reasons
     
         if channel is None:
             channel = self.channel_combo.currentText()
@@ -928,11 +934,14 @@ class SimpleAWGGui(GuiBase):
                 self.plot_widget.clear()
             else:
                 waveform = self._waveform_dict[channel]
-                waveform=waveform[:min(len(waveform), max_length)]
-        
-                self.plot_widget.plot(waveform)
+                
+                ds = max(1,2*(int(np.log2(len(waveform)))-13))  #Downsample when > 10000 data points.
+                waveformds = waveform[::ds]
+                xax = np.arange(len(waveformds))/self._logic.fs*ds
+                #waveform=waveform[:min(len(waveform), max_length)]        
+                self.plot_widget.plot(xax,waveformds)
 
-        
+        max_length=100000
         if selected_block not in self.pulse_blocks:
             if len(self.plot_buffer) > 0:
                 self.plot_buffer = self.plot_buffer[:min(len(self.plot_buffer), max_length)]
@@ -1085,9 +1094,14 @@ class SimpleAWGGui(GuiBase):
             # pulse_parameters.append( self.sweep_phase_btns.checkedButton().text() == "Sine" )
             pulse_parameters.append(0)
         elif tab_name == "Variable Pulses":
-            print(self.var_pulse_length.text(), self.var_pause_length.text())
-            pulse_parameters.append(self.var_pulse_length.text())
-            pulse_parameters.append(self.var_pause_length.text())
+            pulse_time = self.var_pulse_length.text()
+            try: pulse_time=float(pulse_time)
+            except: pass
+            pulse_parameters.append(pulse_time)
+            idle_time = self.var_pause_length.text()
+            try: idle_time=float(idle_time)
+            except: pass
+            pulse_parameters.append(idle_time)
             pulse_parameters.append(0)
             pulse_parameters.append(0)
             pulse_parameters.append(self.var_pulse_amplitude.value())
@@ -1286,15 +1300,17 @@ class SimpleAWGGui(GuiBase):
         waveforms = {}
 
         steps_per_iter = self.steps_input.value()
+
+        self._logic.set_sample_rate(self.DEFAULT_SAMPLE_RATE)
         
-        compiler = PulseCompiler(sequence, self.pulse_blocks, self._logic, steps_per_iter=steps_per_iter)
+        compiler = PulseCompiler(sequence, self.pulse_blocks, self._logic, sample_rate=self.DEFAULT_SAMPLE_RATE, steps_per_iter=steps_per_iter)
         waveforms = compiler.compile()
 
         self._logic.load_waveform_set(waveforms)
             
         self._logic.update_pulses_and_sequences(sequence, self.pulse_blocks)
 
-        self.clear_sequence_dirty()
+        #self.clear_sequence_dirty()
 
         # for i in range(1000):
         #     avail_pulses = self.pulse_blocks.copy()
@@ -1468,29 +1484,35 @@ class SimpleAWGGui(GuiBase):
         pulse_time.setValue(0)
         self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
 
+        pulse_var = QCheckBox()
+        self.pulse_sequence_table.setCellWidget(row, 1, pulse_var)
+
         idle_time = ScienDSpinBox()
         idle_time.setMinimum(0)
         idle_time.setSuffix('s')
         idle_time.setValue(0)
-        self.pulse_sequence_table.setCellWidget(row, 1, idle_time)
+        self.pulse_sequence_table.setCellWidget(row, 2, idle_time)
+
+        idle_var = QCheckBox()
+        self.pulse_sequence_table.setCellWidget(row, 3, idle_var)
 
         channel_widget = ChannelWidget(["IQ"] + self.available_channels)
-        self.pulse_sequence_table.setCellWidget(row, 2, channel_widget)
+        self.pulse_sequence_table.setCellWidget(row, 4, channel_widget)
 
         reps = QSpinBox()
         reps.setRange(1, 10000)
         reps.setValue(1)
-        self.pulse_sequence_table.setCellWidget(row, 3, reps)
+        self.pulse_sequence_table.setCellWidget(row, 5, reps)
 
         start_after_step = QSpinBox()
         start_after_step.setRange(0, 9999)
         start_after_step.setValue(0)
-        self.pulse_sequence_table.setCellWidget(row, 4, start_after_step)
+        self.pulse_sequence_table.setCellWidget(row, 6, start_after_step)
 
         iq_phase = QDoubleSpinBox()
         iq_phase.setRange(-360, 360)
         iq_phase.setValue(0)
-        self.pulse_sequence_table.setCellWidget(row, 5, iq_phase)
+        self.pulse_sequence_table.setCellWidget(row, 7, iq_phase)
 
         self.pulse_sequence_table.resizeRowToContents(row)
 
@@ -1513,21 +1535,34 @@ class SimpleAWGGui(GuiBase):
 
         for row in range(self.pulse_sequence_table.rowCount()):
             pulse_time = self.pulse_sequence_table.cellWidget(row, 0).value()
-            idle_time = self.pulse_sequence_table.cellWidget(row, 1).value()
-            channels = self.pulse_sequence_table.cellWidget(row, 2).selected_channels()
-            reps = self.pulse_sequence_table.cellWidget(row, 3).value()
-            start_after_step = self.pulse_sequence_table.cellWidget(row, 4).value()
-            iq_phase = self.pulse_sequence_table.cellWidget(row, 5).value()
+            pulse_var = self.pulse_sequence_table.cellWidget(row, 1).isChecked()
+            idle_time = self.pulse_sequence_table.cellWidget(row, 2).value()
+            idle_var = self.pulse_sequence_table.cellWidget(row, 3).isChecked()
+            channels = self.pulse_sequence_table.cellWidget(row, 4).selected_channels()
+            reps = self.pulse_sequence_table.cellWidget(row, 5).value()
+            start_after_step = self.pulse_sequence_table.cellWidget(row, 6).value()
+            iq_phase = self.pulse_sequence_table.cellWidget(row, 7).value()
 
-            sequence.append({
-                # inline block - no named pulse block or increments, matches PulseCompiler's "Pulses" format
-                "block": ["Pulses", pulse_time, idle_time, 0, 0],
-                "channels": channels,
-                "repetitions": reps,
-                "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
-                "Receive Trig": start_after_step,
-                "IQ Phase": iq_phase
-            })
+            if pulse_var or idle_var:
+                sequence.append({
+                    # inline block - no named pulse block or increments, matches PulseCompiler's "Pulses" format
+                    "block": ["Variable Pulses", [pulse_time,'tau'][pulse_var], [idle_time,'tau'][idle_var], 0, 0],
+                    "channels": channels,
+                    "repetitions": reps,
+                    "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
+                    "Receive Trig": start_after_step,
+                    "IQ Phase": iq_phase
+                })
+            else:
+                sequence.append({
+                    # inline block - no named pulse block or increments, matches PulseCompiler's "Pulses" format
+                    "block": ["Pulses", pulse_time, idle_time, 0, 0],
+                    "channels": channels,
+                    "repetitions": reps,
+                    "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
+                    "Receive Trig": start_after_step,
+                    "IQ Phase": iq_phase
+                })
 
         return sequence
     
@@ -1546,7 +1581,7 @@ class SimpleAWGGui(GuiBase):
 
         self._logic.update_pulses_and_sequences(sequence, {})
 
-        self.clear_pulse_sequence_dirty()
+        #self.clear_pulse_sequence_dirty()
 
     def save_pulse_sequence(self):
         """ Saves the sequence currently displayed in the Pulse Sequencer table to disk """
@@ -1654,53 +1689,93 @@ class SimpleAWGGui(GuiBase):
         self.pulse_sequence_table.clear()
         self.pulse_sequence_table.setRowCount(0)
 
-        self.pulse_sequence_table.setColumnCount(6)
+        self.pulse_sequence_table.setColumnCount(8)
         self.pulse_sequence_table.setHorizontalHeaderLabels([
-            "Pulse Time", "Idle Time", "Channels", "Repetitions", "Start After Step", "IQ Phase"
+            "Pulse\nTime", 
+            "Pulse\nVar", 
+            "Idle\nTime", 
+            "Idle\nVar", 
+            "Channels", 
+            "Repetitions", 
+            "Start\nAfter Step", 
+            "IQ Phase"
         ])
 
+        self.pulse_sequence_table.setColumnWidth(1,40)
+        self.pulse_sequence_table.setColumnWidth(3,40)
+        self.pulse_sequence_table.setColumnWidth(4,175)
+
         for step in sequence:
-            row = self.pulse_sequence_table.rowCount()
-            self.pulse_sequence_table.insertRow(row)
-
             block = step["block"]
+            self.add_pulse_sequence_step()
+            row = self.pulse_sequence_table.rowCount()-1
 
-            pulse_time = ScienDSpinBox()
-            pulse_time.setMinimum(0)
-            pulse_time.setSuffix('s')
-            pulse_time.setValue(block[1])
-            self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
+            if block[0]=='Pulses':
+                self.pulse_sequence_table.cellWidget(row,0).setValue(block[1])
+                self.pulse_sequence_table.cellWidget(row,1).setChecked(0)
+                self.pulse_sequence_table.cellWidget(row,2).setValue(block[2])
+                self.pulse_sequence_table.cellWidget(row,3).setChecked(0)
+            elif block[0]=='Variable Pulses':
+                if type(block[1]) is str:
+                    self.pulse_sequence_table.cellWidget(row,0).setValue(0)
+                    self.pulse_sequence_table.cellWidget(row,1).setChecked(True)
+                else:
+                    self.pulse_sequence_table.cellWidget(row,0).setValue(block[1])
+                    self.pulse_sequence_table.cellWidget(row,1).setChecked(False)
+                if type(block[2]) is str:
+                    self.pulse_sequence_table.cellWidget(row,2).setValue(0)
+                    self.pulse_sequence_table.cellWidget(row,3).setChecked(True)
+                else:
+                    self.pulse_sequence_table.cellWidget(row,2).setValue(block[2])
+                    self.pulse_sequence_table.cellWidget(row,3).setChecked(False)
+            self.pulse_sequence_table.cellWidget(row,4).set_channels(step["channels"])
+            self.pulse_sequence_table.cellWidget(row,5).setValue(step["repetitions"])
+            self.pulse_sequence_table.cellWidget(row,6).setValue(step["Receive Trig"])
+            self.pulse_sequence_table.cellWidget(row,7).setValue(step["IQ Phase"])
 
-            idle_time = ScienDSpinBox()
-            idle_time.setMinimum(0)
-            idle_time.setSuffix('s')
-            idle_time.setValue(block[2])
-            self.pulse_sequence_table.setCellWidget(row, 1, idle_time)
 
-            channel_widget = ChannelWidget(["IQ"] + self.available_channels)
-            channel_widget.set_channels(step["channels"])
-            self.pulse_sequence_table.setCellWidget(row, 2, channel_widget)
+            if False:
+                row = self.pulse_sequence_table.rowCount()
+                self.pulse_sequence_table.insertRow(row)
 
-            reps = QSpinBox()
-            reps.setRange(1, 10000)
-            reps.setValue(step["repetitions"])
-            self.pulse_sequence_table.setCellWidget(row, 3, reps)
+                
 
-            start_after_step = QSpinBox()
-            start_after_step.setRange(0, 9999)
-            start_after_step.setValue(step["Receive Trig"])
-            self.pulse_sequence_table.setCellWidget(row, 4, start_after_step)
+                pulse_time = ScienDSpinBox()
+                pulse_time.setMinimum(0)
+                pulse_time.setSuffix('s')
+                pulse_time.setValue(block[1])
+                self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
 
-            iq_phase = QDoubleSpinBox()
-            iq_phase.setRange(-360, 360)
-            iq_phase.setValue(step["IQ Phase"])
-            self.pulse_sequence_table.setCellWidget(row, 5, iq_phase)
+                idle_time = ScienDSpinBox()
+                idle_time.setMinimum(0)
+                idle_time.setSuffix('s')
+                idle_time.setValue(block[2])
+                self.pulse_sequence_table.setCellWidget(row, 2, idle_time)
 
-            self.pulse_sequence_table.resizeRowToContents(row)
+                channel_widget = ChannelWidget(["IQ"] + self.available_channels)
+                channel_widget.set_channels(step["channels"])
+                self.pulse_sequence_table.setCellWidget(row, 4, channel_widget)
 
-            self._connect_pulse_sequence_row_dirty_signals(
-                pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase
-            )
+                reps = QSpinBox()
+                reps.setRange(1, 10000)
+                reps.setValue(step["repetitions"])
+                self.pulse_sequence_table.setCellWidget(row, 5, reps)
+
+                start_after_step = QSpinBox()
+                start_after_step.setRange(0, 9999)
+                start_after_step.setValue(step["Receive Trig"])
+                self.pulse_sequence_table.setCellWidget(row, 6, start_after_step)
+
+                iq_phase = QDoubleSpinBox()
+                iq_phase.setRange(-360, 360)
+                iq_phase.setValue(step["IQ Phase"])
+                self.pulse_sequence_table.setCellWidget(row, 7, iq_phase)
+
+                self.pulse_sequence_table.resizeRowToContents(row)
+
+                self._connect_pulse_sequence_row_dirty_signals(
+                    pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase
+                )
 
     def _load_rfcontrol(self, checked=False):
         if self._microwave.is_connected:

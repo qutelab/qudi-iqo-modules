@@ -438,7 +438,7 @@ class SimpleScanLogic(LogicBase):
                 parent = self
         )
         self.pulsedRabiScanner = self.ScanDevice('Rabi',
-            lambda x: self._awg().set_pulse_time(x),
+            lambda x: self._awg().set_variable_time(x),
             lambda : _pulsed_ODMR_getY(self),
             data_labels=['Time','Ratio'], # x, y1, y2,...
             data_units=['s',''],

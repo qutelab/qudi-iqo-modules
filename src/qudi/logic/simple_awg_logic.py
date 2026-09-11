@@ -26,7 +26,7 @@ class SimpleAWGLogic(LogicBase):
     awg = Connector(interface='PulserInterface')
     # pulse_gen = Connector(interface='MicrowaveInterface')
 
-    sigWaveformUpdated = QtCore.Signal(dict)
+    sigWaveformUpdated = QtCore.Signal()
     sigStatusUpdated = QtCore.Signal(str)
     sigAwgStateReady = QtCore.Signal(bool)
 
@@ -43,6 +43,7 @@ class SimpleAWGLogic(LogicBase):
 
     def on_activate(self):
         self._awg = self.awg()
+        self.get_sample_rate()  #Store variable
         # self.microwave = self.pulse_gen()
         # self.setup_microwave()
 
@@ -84,8 +85,7 @@ class SimpleAWGLogic(LogicBase):
             data = self._process_channel_data(temp_data, channel_key)
 
             self.waveform[channel_key] = data
-            graph_waveform = {channel_key: data[:min(1000000, len(data))]} # for preformance reasons limit how much is graphed
-            self.sigWaveformUpdated.emit(graph_waveform)
+            self.sigWaveformUpdated.emit()
 
             if isinstance(filepath, str):
                 self.sigStatusUpdated.emit(
@@ -161,18 +161,14 @@ class SimpleAWGLogic(LogicBase):
         Any channel not present in `waveforms` is dropped, so channels that no longer have a
         step in the newly compiled sequence/block don't keep stale data from a previous load.
 
-        Processes all channels first and emits a single combined update instead of one signal
-        (and GUI plot refresh) per channel, which otherwise dominates the runtime for sequences
-        with many channels.
         """
         self.waveform = {}
         graph_waveform = {}
         for channel, data in waveforms.items():
             processed = self._process_channel_data(data, channel)
             self.waveform[channel] = processed
-            graph_waveform[channel] = processed[:min(1000000, len(processed))]
 
-        self.sigWaveformUpdated.emit(graph_waveform)
+        self.sigWaveformUpdated.emit()
         self.sigStatusUpdated.emit('Loaded created waveform')
 
     # -------------------------------------------------
@@ -249,7 +245,7 @@ class SimpleAWGLogic(LogicBase):
 
     def clear_waveforms(self):
         self.waveform = {}
-        self.sigWaveformUpdated.emit(self.waveform)
+        self.sigWaveformUpdated.emit()
         self.awg_ready = False
         self.sigAwgStateReady.emit(self.awg_ready)
 
@@ -364,14 +360,17 @@ class SimpleAWGLogic(LogicBase):
 
     def get_sample_rate(self):
         """ Query the awg for its current sample rate """
-        return self._awg.get_sample_rate()
+        self.fs=self._awg.get_sample_rate()
+        return self.fs
 
     def set_sample_rate(self, sample_rate):
         """ Set the awg hardware sample rate """
         self._awg.set_sample_rate(sample_rate)
+        self.fs=sample_rate
 
-    def set_pulse_time(self, pulse_time):
+    def set_variable_time(self, variable_time):
         if not self.awg_ready:
+            self.log.warning('AWG not ready')
             return
         self.stop_output()
         #print("Pulse Time: ", pulse_time)
@@ -381,24 +380,28 @@ class SimpleAWGLogic(LogicBase):
         if self._awg.connected:
             for step in sequence:
                 current_block = step['block']
-                current_params = pulse_blocks[current_block]
+                if isinstance(current_block,str):
+                    block_name=current_block
+                    current_block = pulse_blocks[current_block]
+                else:
+                    block_name=None
 
-                if current_params[0] == "Variable Pulses":
+                if current_block[0] == "Variable Pulses":
                     # used_pulse_blocks.append(current_block)
-                    if current_params[1] == self.selected_param:
-                        #current_params[0] = "Pulses"
-                        current_params[1] = pulse_time #* 1e-9
-                    if current_params[2] == self.selected_param:
-                        #current_params[0] = "Pulses"
-                        current_params[2] = pulse_time #* 1e-9
+                    if current_block[1] == self.selected_param:
+                        current_block[1] = variable_time
+                    if current_block[2] == self.selected_param:
+                        current_block[2] = variable_time
 
-                    pulse_blocks[current_block] = current_params
-            compiler = PulseCompiler(sequence, pulse_blocks, self, steps_per_iter=10000)
-            waveforms = compiler.compile()
+                    if block_name is not None:
+                        pulse_blocks[block_name] = current_block
             
+            compiler = PulseCompiler(sequence, pulse_blocks, self, steps_per_iter=10000, sample_rate=self.fs)
+            waveforms = compiler.compile()
+
             self.load_waveform_set(waveforms)
             self.upload_waveform()
-            
+
             self.start_output()
             
     def update_pulses_and_sequences(self, sequence, pulse_blocks):
@@ -670,25 +673,26 @@ class PulseCompiler:
             offset = start_offset
 
             if isinstance(step['block'], str):
-                pulse_type = self.pulse_blocks[step['block']]
+                pulse_block = self.pulse_blocks[step['block']]
             else:
-                pulse_type = step['block']
+                pulse_block = step['block']
 
             # A Pulses/Variable Pulses block with no increment is identical on every repetition,
             # so the whole run can be tiled in one numpy call instead of looping in Python per rep
-            is_static = pulse_type[0] in ("Pulses", "Variable Pulses") and pulse_type[3] == 0 and pulse_type[4] == 0
+            is_static = pulse_block[0] in ("Pulses", "Variable Pulses") and pulse_block[3] == 0 and pulse_block[4] == 0
 
             if is_static:
                 current_run_count = self._step_run_tracker[step_id]
 
                 if used_iq:
                     if len(chnl) > 1:
-                        pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
-                        standard_pulse = self.compile_pulse(pulse_type, current_run_count)
+                        pulse_shape = self.compile_pulse(pulse_block, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
+                        standard_pulse = self.compile_pulse(pulse_block, current_run_count)
                     else:
-                        pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
+                        pulse_shape = self.compile_pulse(pulse_block, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
                 else:
-                    pulse_shape = self._get_cached_pulse(step['block'], pulse_type, current_run_count)
+                    pulse_shape = self._get_cached_pulse(step['block'], pulse_block, current_run_count)
+                    #pulse_shape= self.compile_pulse(pulse_block, current_run_count)
 
                 self._step_run_tracker[step_id] += repetitions
 
@@ -721,12 +725,12 @@ class PulseCompiler:
 
                     if used_iq:
                         if len(chnl) > 1:
-                            pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
-                            standard_pulse = self.compile_pulse(pulse_type, current_run_count)
+                            pulse_shape = self.compile_pulse(pulse_block, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
+                            standard_pulse = self.compile_pulse(pulse_block, current_run_count)
                         else:
-                            pulse_shape = self.compile_pulse(pulse_type, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
+                            pulse_shape = self.compile_pulse(pulse_block, current_run_count, iq_out=True, iq_phase=step["IQ Phase"])
                     else:
-                        pulse_shape = self._get_cached_pulse(step['block'], pulse_type, current_run_count)
+                        pulse_shape = self._get_cached_pulse(step['block'], pulse_block, current_run_count)
 
                     self._step_run_tracker[step_id] += 1
 
@@ -760,15 +764,15 @@ class PulseCompiler:
             if send_flag != 0 and send_flag in self.steps_by_wait_flag:
                 self._compile_flag(send_flag, step_end)
 
-    def _get_cached_pulse(self, block_key, pulse_type, current_run_count):
+    def _get_cached_pulse(self, block_key, pulse_block, current_run_count):
         """ Compiles a non-IQ pulse, reusing a cached result for blocks with no length increment """
         cache_key = ','.join(map(str, block_key)) if isinstance(block_key, list) else block_key
 
         if cache_key in self.compiled_pulses:
             return self.compiled_pulses[cache_key]
 
-        pulse_shape = self.compile_pulse(pulse_type, current_run_count)
-        if pulse_type[3] == 0 and pulse_type[4] == 0:
+        pulse_shape = self.compile_pulse(pulse_block, current_run_count)
+        if pulse_block[3] == 0 and pulse_block[4] == 0:
             self.compiled_pulses[cache_key] = pulse_shape
         return pulse_shape
 
@@ -776,13 +780,19 @@ class PulseCompiler:
 
         pulse_type = pulse_parameters[0]
         if pulse_type == "Pulses" or pulse_type =="Variable Pulses":
-            if isinstance(pulse_parameters[1], str) or isinstance(pulse_parameters[2], str):
-                if iq_out:
-                    return [np.zeros(10), np.zeros(10)]
-                return np.zeros(10)
+            #if isinstance(pulse_parameters[1], str) or isinstance(pulse_parameters[2], str):
+            #    if iq_out:
+            #        return [np.zeros(10), np.zeros(10)]
+            #    return np.zeros(10)
 
-            pulse_length = pulse_parameters[1] * self.fs #self.pulse_length.value()
-            pause_length = pulse_parameters[2] * self.fs #self.pause_length.value()
+            if isinstance(pulse_parameters[1],str):
+                pulse_length = 2
+            else:
+                pulse_length = pulse_parameters[1] * self.fs #self.pulse_length.value()
+            if isinstance(pulse_parameters[2], str):
+                pause_length = 2
+            else:
+                pause_length = pulse_parameters[2] * self.fs #self.pause_length.value()
             pulse_step_size = pulse_parameters[3] * self.fs #self.increment_size.value()
             pause_step_size = pulse_parameters[4] * self.fs #self.pause_increment_size.value()
 
@@ -793,6 +803,8 @@ class PulseCompiler:
 
             num_pulse_samples = int(pulse_length + pulse_step_size*(iters // self.steps_per_iter))
             num_pause_samples = int(pause_length + pause_step_size*(iters // self.steps_per_iter))
+            if num_pulse_samples+num_pause_samples>1e7:
+                raise RuntimeError('Unable to create pulse greater than 1e7 samples', pulse_parameters, iters, self.fs)
             waveform = np.concatenate((np.ones(num_pulse_samples), np.zeros(num_pause_samples)))
             
             if iq_out:
@@ -830,7 +842,7 @@ class PulseCompiler:
                 
                 return [cos_signal, sin_signal]
             else: # Sweep should be done using IQ can be changed if needed
-                self._logic.log.warning('Frequency sweep called on non-IQ channel non supported, returning zeros')
+                self._logic.log.warning('Frequency sweep called on non-IQ channel not supported, returning zeros')
                 return np.zeros(pts_per_step)
         else:
             return pulse_parameters[1]

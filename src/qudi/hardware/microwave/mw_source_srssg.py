@@ -29,8 +29,8 @@ try:
     import pyvisa as visa
     from pyvisa.resources import MessageBasedResource
 except ImportError:
-    import visa
-    from visa.resources import MessageBasedResource
+    import visa  # type: ignore
+    from visa.resources import MessageBasedResource  # type: ignore
 import time
 import numpy as np
 
