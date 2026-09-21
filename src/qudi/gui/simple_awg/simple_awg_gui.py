@@ -120,7 +120,7 @@ class SimpleAWGGui(GuiBase):
         self.tabs.addTab(self.sequence_tab, "Sequence Manager")
         self.tabs.addTab(self.pulse_sequencer_tab, "Pulse Sequencer")
 
-        waveform_layout = QtWidgets.QVBoxLayout(self.waveform_tab)
+        self.waveform_layout = QtWidgets.QVBoxLayout(self.waveform_tab)
         channels_layout = QtWidgets.QVBoxLayout(self.channels_tab)
         creation_layout = QtWidgets.QVBoxLayout(self.creation_tab)
 
@@ -129,6 +129,7 @@ class SimpleAWGGui(GuiBase):
         # ----------------------------------------
 
         self.plot_widget = pg.PlotWidget()
+        self.plot_widget_stacked = pg.GraphicsLayoutWidget()
         self.pulse_plot = pg.PlotWidget()
 
         self.plot_widget.setLabel('left', 'Amplitude')
@@ -140,66 +141,29 @@ class SimpleAWGGui(GuiBase):
         # Waveform tab Buttons and Inputs
         # ----------------------------------------
 
-        # mw_freq_sweep_layout = QFormLayout()
-
-        # self.microwave_power_input = QDoubleSpinBox()
-        # self.microwave_power_input.setRange(-110, 16.5)
-        # self.microwave_power_input.setDecimals(6)
-
-        # self.microwave_start_freq = QDoubleSpinBox()
-        # self.microwave_end_freq = QDoubleSpinBox()
-        # self.microwave_freq_steps = QSpinBox()
-        # self.microwave_freq_steps.setRange(1, 1e7)
-
-        # self.microwave_start_freq.setDecimals(6)
-        # self.microwave_end_freq.setDecimals(6)
-
-        # power_layout = QHBoxLayout()
-        # power_layout.addWidget( QLabel("Microwave Power") )
-        # power_layout.addWidget(self.microwave_power_input)
-        # self.microwave_power_input.setSuffix(" dBm")
-        # self.microwave_power_input.setValue(-110)
-        # # power_layout.addWidget( QLabel("dBm") )
-        # power_layout.setSpacing(45)
-        # # power_layout.setContentsMargins(0, 100, 0, 100)
-
-        # mw_freq_sweep_layout.addRow(power_layout)
-
-        # mw_freq_layout = QHBoxLayout()
-        # mw_freq_layout.addWidget( QLabel("Lower End") )
-        # mw_freq_layout.addWidget( self.microwave_start_freq )
-        # self.microwave_start_freq.setSuffix(" GHz")
-        # mw_freq_layout.addWidget( QLabel(" Higher End") )
-        # mw_freq_layout.addWidget( self.microwave_end_freq )
-        # self.microwave_end_freq.setSuffix(" GHz")
-        # mw_freq_layout.addWidget( QLabel("Number of Steps") )
-        # mw_freq_layout.addWidget(self.microwave_freq_steps)
-        # mw_freq_layout.setSpacing(45)
-        # mw_freq_layout.setContentsMargins(0, 0, 0, 10)
-
-        # mw_freq_sweep_layout.addRow(mw_freq_layout)
-
-        # waveform_layout.addLayout(mw_freq_sweep_layout)
-        waveform_layout.addWidget(self.plot_widget)
+        self.waveform_layout.addWidget(self.plot_widget)
+        self.waveform_layout._showStackQ = False
 
         button_layout = QtWidgets.QHBoxLayout()
 
         self.load_button = QtWidgets.QPushButton('Load CSV')
+        self.save_button = QtWidgets.QPushButton('Save CSV')
         self.upload_button = QtWidgets.QPushButton('Upload')
         self.start_button = QtWidgets.QPushButton('Start')
         self.stop_button = QtWidgets.QPushButton('Stop')
         self.clear_button = QPushButton('Clear')
 
         button_layout.addWidget(self.load_button)
+        button_layout.addWidget(self.save_button)
         button_layout.addWidget(self.upload_button)
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
         button_layout.addWidget(self.clear_button)
 
-        waveform_layout.addLayout(button_layout)
+        self.waveform_layout.addLayout(button_layout)
 
         hw_button_layout = QtWidgets.QHBoxLayout()
-        waveform_layout.addLayout(hw_button_layout)
+        self.waveform_layout.addLayout(hw_button_layout)
 
 
         self.awg_toggle_button = QtWidgets.QPushButton("Connect to AWG")
@@ -273,7 +237,7 @@ class SimpleAWGGui(GuiBase):
 
         self.status_label = QtWidgets.QLabel('Idle')
 
-        waveform_layout.addWidget(self.status_label)
+        self.waveform_layout.addWidget(self.status_label)
 
         self.status_bar = self._main_window.statusBar()
 
@@ -287,6 +251,10 @@ class SimpleAWGGui(GuiBase):
         self.load_button.clicked.connect(
             self.load_waveform
         )
+
+        self.save_button.clicked.connect(
+                    self.save_waveform
+                )
 
         self.upload_button.clicked.connect(
             self._logic.upload_waveform
@@ -329,7 +297,7 @@ class SimpleAWGGui(GuiBase):
         
         channel_layout.addWidget(channel_label)
         channel_layout.addWidget(self.channel_combo)
-        waveform_layout.addLayout(channel_layout)
+        self.waveform_layout.addLayout(channel_layout)
 
         self.channel_combo.currentTextChanged.connect(
             self.refresh_plot
@@ -787,24 +755,6 @@ class SimpleAWGGui(GuiBase):
         self.pulse_sequence_table = QTableWidget()
         self.rebuild_pulse_sequence_table([])
 
-        if False:
-            self.pulse_sequence_table.setColumnCount(8)
-
-            self.pulse_sequence_table.setHorizontalHeaderLabels([
-                "Pulse Time",
-                "Pulse Var",
-                "Idle Time",
-                "Idle Var",
-                "Channels",
-                "Repetitions",
-                "Start After Step",
-                "IQ Phase"
-            ])
-
-            self.pulse_sequence_table.horizontalHeader().setSectionResizeMode(
-                2, QHeaderView.Stretch
-            )
-
         pulse_seq_add_btn = QPushButton("Add Step")
         pulse_seq_remove_btn = QPushButton("Remove Step")
         pulse_seq_write_btn = QPushButton("Write Sequence")
@@ -873,6 +823,10 @@ class SimpleAWGGui(GuiBase):
             # connecting; if the AWG was already connected from a prior GUI reload, do it here
             self.refresh_channel_selector()
 
+        #Needs to run after self.show:
+        self.pulse_sequence_table.viewport().setMouseTracking(False)
+        self.sequence_table.viewport().setMouseTracking(False)
+
     def on_deactivate(self):
         self._rf_control_frequency.valueChanged.disconnect()
         self._rf_control_power.valueChanged.disconnect()
@@ -902,6 +856,25 @@ class SimpleAWGGui(GuiBase):
             channel = self.channel_combo.currentText()
 
             self._logic.load_waveform_file(filepath, channel)
+
+    def save_waveform(self):
+        """Used to save pulse train waveform to csv files"""
+   
+        filepath, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self._main_window,
+            'Save Waveform',
+            '',
+            'CSV Files (*.csv)'
+        )
+
+        if filepath:
+            channel = self.channel_combo.currentText()
+            if channel=='Stack channels':
+                for channelI in self.available_channels:
+                    filepathI = f"{filepath.split('.csv')[0]}-{channelI}.csv"
+                    self._logic.save_waveform_file(filepathI, channelI)
+            else:
+                self._logic.save_waveform_file(filepath, channel)
             
 
     # -------------------------------------------------
@@ -915,24 +888,68 @@ class SimpleAWGGui(GuiBase):
         self.refresh_plot()
 
     def refresh_plot(self):
-        """ Clears plots updates plots according to the currently selected channel """
+        """ Clears and updates plots according to the currently selected channel """
         self.plot_widget.clear()
-        self.pulse_plot.clear()
-    
-        channel = self.channel_combo.currentData()
-
-        selected_block = None
-        if hasattr(self, 'block_name_edit'):
-            selected_block = self.block_name_edit.text()
+        self.plot_widget_stacked.clear()
         
-    
+        channel = self.channel_combo.currentData()
         if channel is None:
             channel = self.channel_combo.currentText()
 
-        if hasattr(self, '_waveform_dict'): # Some times waveforms had not been initialized
-            if channel not in self._waveform_dict:
-                self.plot_widget.clear()
-            else:
+        if not hasattr(self, '_waveform_dict'): # Some times waveforms had not been initialized
+            return
+        
+        if channel=='Stack channels':
+            if not self.waveform_layout._showStackQ:
+                self.waveform_layout.removeWidget(self.plot_widget)
+                self.plot_widget.setVisible(False)
+                self.waveform_layout.insertWidget(0,self.plot_widget_stacked)
+                self.plot_widget_stacked.setVisible(True)
+                self.waveform_layout._showStackQ = True
+                self.load_button.setEnabled(False)
+                self.save_button.setText("Save all CSV")
+
+            plots = []
+            for ii, channel in enumerate(self.available_channels):
+                if channel in self._waveform_dict:
+                    waveform = self._waveform_dict[channel]
+                    
+                    ds = max(1,2*(int(np.log2(len(waveform)))-13))  #Downsample when > 10000 data points.
+                    waveformds = waveform[::ds]
+                    xax = np.arange(len(waveformds))/self._logic.fs*ds
+                    #waveform=waveform[:min(len(waveform), max_length)]
+
+                    plots.append(self.plot_widget_stacked.addPlot(row=ii,col=0))
+
+                    plots[ii].plot(xax,waveformds)
+
+                    if ii>0:
+                        plots[ii].setXLink(plots[0])
+
+                    if ii<len(self.available_channels)-1:
+                        plots[ii].hideAxis('bottom')
+
+                    plots[ii].getViewBox().autoRange()
+                    plots[ii].getAxis('left').setWidth(50)
+            # if plots:  #This didn't work to auto set left width
+            #     # Find the maximum width currently needed by any left axis
+            #     max_w = max(p.getAxis('left').pixelWidth() for p in plots)
+                
+            #     # Apply that maximum width to all of them uniformly
+            #     for p in plots:
+            #         p.getAxis('left').setWidth(max_w)
+
+        else:
+            if self.waveform_layout._showStackQ:
+                self.waveform_layout.removeWidget(self.plot_widget_stacked)
+                self.plot_widget_stacked.setVisible(False)
+                self.waveform_layout.insertWidget(0,self.plot_widget)
+                self.plot_widget.setVisible(True)
+                self.waveform_layout._showStackQ = False
+                self.load_button.setEnabled(True)
+                self.save_button.setText("Save CSV")
+
+            if channel in self._waveform_dict:
                 waveform = self._waveform_dict[channel]
                 
                 ds = max(1,2*(int(np.log2(len(waveform)))-13))  #Downsample when > 10000 data points.
@@ -941,23 +958,10 @@ class SimpleAWGGui(GuiBase):
                 #waveform=waveform[:min(len(waveform), max_length)]        
                 self.plot_widget.plot(xax,waveformds)
 
-        max_length=100000
-        if selected_block not in self.pulse_blocks:
-            if len(self.plot_buffer) > 0:
-                self.plot_buffer = self.plot_buffer[:min(len(self.plot_buffer), max_length)]
-                self.pulse_plot.plot(self.plot_buffer)
-            else:
-                self.pulse_plot.clear()
-        # else:
-            # compiler = PulseCompiler(None, self.pulse_blocks, self._logic, self._logic.awg().get_sample_rate() )
-            # temp_plot = compiler.compile_pulse(self.create_pulse())
-            # self.pulse_plot.plot(temp_plot)
+                #Set range to reasonable bounds
+                self.plot_widget.getViewBox().autoRange()
+        
 
-        #Set range to reasonable bounds
-        self.plot_widget.getViewBox().autoRange()
-        self.pulse_plot.getViewBox().autoRange()
-
-    
     def toggle_awg(self):
         """ If AWG already connected toggle text and button action """
         checked = self._logic._awg.connected
@@ -1017,6 +1021,7 @@ class SimpleAWGGui(GuiBase):
 
         self.channel_combo.clear()
         self.pulse_channel_combo.clear()
+        self.channel_combo.addItem('Stack channels')
         self.channel_combo.addItems(self.available_channels)
         self.pulse_channel_combo.addItems(self.available_channels)
     
@@ -1146,7 +1151,23 @@ class SimpleAWGGui(GuiBase):
         """ Plots the chosen pulse block """
         compiler = PulseCompiler(None, self.pulse_blocks, self._logic, sample_rate=self._logic.awg().get_sample_rate())
         self.plot_buffer = compiler.compile_pulse(self.create_pulse()) #self.create_waveform()
-        self.refresh_plot()
+        #self.refresh_plot()
+        max_length=100000
+        self.pulse_plot.clear()
+
+        selected_block = None
+        if hasattr(self, 'block_name_edit'):
+            selected_block = self.block_name_edit.text()
+
+        if selected_block not in self.pulse_blocks:
+            if len(self.plot_buffer) > 0:
+                self.plot_buffer = self.plot_buffer[:min(len(self.plot_buffer), max_length)]
+                self.pulse_plot.plot(self.plot_buffer)
+        else:
+            compiler = PulseCompiler(None, self.pulse_blocks, self._logic, sample_rate=self._logic.awg().get_sample_rate() )
+            temp_plot = compiler.compile_pulse(self.create_pulse())
+            self.pulse_plot.plot(temp_plot)
+        self.pulse_plot.getViewBox().autoRange()
 
     def create_pulse_block(self):
         """ Creates the current pulse block """
@@ -1581,8 +1602,6 @@ class SimpleAWGGui(GuiBase):
 
         self._logic.update_pulses_and_sequences(sequence, {})
 
-        #self.clear_pulse_sequence_dirty()
-
     def save_pulse_sequence(self):
         """ Saves the sequence currently displayed in the Pulse Sequencer table to disk """
         sequence_name = self.new_pulse_sequence_name.text()
@@ -1733,49 +1752,6 @@ class SimpleAWGGui(GuiBase):
             self.pulse_sequence_table.cellWidget(row,6).setValue(step["Receive Trig"])
             self.pulse_sequence_table.cellWidget(row,7).setValue(step["IQ Phase"])
 
-
-            if False:
-                row = self.pulse_sequence_table.rowCount()
-                self.pulse_sequence_table.insertRow(row)
-
-                
-
-                pulse_time = ScienDSpinBox()
-                pulse_time.setMinimum(0)
-                pulse_time.setSuffix('s')
-                pulse_time.setValue(block[1])
-                self.pulse_sequence_table.setCellWidget(row, 0, pulse_time)
-
-                idle_time = ScienDSpinBox()
-                idle_time.setMinimum(0)
-                idle_time.setSuffix('s')
-                idle_time.setValue(block[2])
-                self.pulse_sequence_table.setCellWidget(row, 2, idle_time)
-
-                channel_widget = ChannelWidget(["IQ"] + self.available_channels)
-                channel_widget.set_channels(step["channels"])
-                self.pulse_sequence_table.setCellWidget(row, 4, channel_widget)
-
-                reps = QSpinBox()
-                reps.setRange(1, 10000)
-                reps.setValue(step["repetitions"])
-                self.pulse_sequence_table.setCellWidget(row, 5, reps)
-
-                start_after_step = QSpinBox()
-                start_after_step.setRange(0, 9999)
-                start_after_step.setValue(step["Receive Trig"])
-                self.pulse_sequence_table.setCellWidget(row, 6, start_after_step)
-
-                iq_phase = QDoubleSpinBox()
-                iq_phase.setRange(-360, 360)
-                iq_phase.setValue(step["IQ Phase"])
-                self.pulse_sequence_table.setCellWidget(row, 7, iq_phase)
-
-                self.pulse_sequence_table.resizeRowToContents(row)
-
-                self._connect_pulse_sequence_row_dirty_signals(
-                    pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase
-                )
 
     def _load_rfcontrol(self, checked=False):
         if self._microwave.is_connected:

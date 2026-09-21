@@ -50,22 +50,6 @@ class SimpleAWGLogic(LogicBase):
     def on_deactivate(self):
         self._awg.on_deactivate()
         # self.microwave.on_deactivate()
-        
-    # def get_microwave_power(self):
-    #     """ Get the current microwave power in dBm """
-    #     return self.microwave.cw_power()
-
-    # def set_microwave_power(self, power):
-    #     """ Set the current microwave power in dBm """
-    #     self.microwave._write(f'AMPR {power:f}')
-
-    # def get_microwave_frequency(self):
-    #     """ Get the current microwave frequency in Hz """
-    #     return self.microwave._cw_frequency
-
-    # def set_microwave_frequency(self, freq):
-    #     """ Set the current microwave frequency in Hz """
-    #     self.microwave._write(f'FREQ {freq:f}')
 
     # -------------------------------------------------
     # Load waveform from CSV
@@ -101,6 +85,10 @@ class SimpleAWGLogic(LogicBase):
             self.sigStatusUpdated.emit(
                 f'Failed to load waveform: {err}'
             )
+
+    def save_waveform_file(self,filepath,channel_key):
+            np.savetxt(filepath,self.waveform[channel_key], delimiter=',')
+            self.log.info(f'Saved {channel_key} waveform to {filepath}')
 
     def _process_channel_data(self, temp_data, channel_key):
         """ Scales/casts/pads raw samples for a single channel without any GUI signal emission """
@@ -313,37 +301,6 @@ class SimpleAWGLogic(LogicBase):
             self.sigStatusUpdated.emit(
                 f'Stop failed: {err}'
             )
-
-    # def setup_microwave(self, freq=2.7e9, power=-120):
-    #     """ Setup microwave modulation, power, and frequency """
-    #     self.microwave._write(f"ENBL 0")
-    #     if power >= -110:
-    #         self.microwave_power(power)
-
-    #     self.microwave._write(f"FREQ {freq:f}")
-    #     self.microwave._write(f"TYPE 7")
-    #     self.microwave._write(f"QFNC 5")
-    #     self.microwave._write(f"MODL 1")
-
-    # def scan_frequencies(self, power, start_freq, end_freq, steps):
-    #     """ Loops through set frequency range at given microwave power. Current loaded AWG sequence is run each time """
-    #     if not self.awg_ready:
-    #         return
-            
-    #     freqs = np.linspace(start_freq, end_freq, steps)
-    #     self.set_microwave_power(power)
-
-    #     self.microwave = self.pulse_gen()
-    #     self.microwave._write(f"TYPE 7")
-    #     self.microwave._write(f"QFNC 5")
-    #     self.microwave._write(f"MODL 1")
-    #     self.microwave._write(f"ENBR 1")
-        
-    #     for freq in freqs:
-    #         self.set_microwave_frequency(freq)
-    #         self.start_output()
-
-    #     self.microwave._write(f"ENBR 0")  
 
     def get_channel_state(self, channel):
         """ Query the awg to get the available channels """
@@ -641,7 +598,7 @@ class PulseCompiler:
                 master_arr[seg_offset:seg_offset + seg.size] = seg
             flag_waveforms[ch] = master_arr
 
-        print("Compiling Sequence Finished")
+        #print("Compiling Sequence Finished")
         return flag_waveforms
 
     def _compile_flag(self, flag_id, start_offset):
