@@ -768,7 +768,6 @@ class SimpleScanLogic(LogicBase):
                     raise RuntimeError('_scan_worker already running, cannot get new data point.') #This is caught below to log.
                 
                 if (self._point_counter==0):  # Each line, check the point order.
-                    print('Setting scan order:',self._line_counter, self._line_counter%2)
                     self._point_order = np.arange(len(self._x_data))
                     
                     if self.scan_order == 'Forward':
@@ -776,11 +775,9 @@ class SimpleScanLogic(LogicBase):
                     elif self.scan_order == 'Backward':
                         self._point_order = self._point_order[::-1]
                     elif self.scan_order == 'Forward_Backward' and self._line_counter%2==1:  #Every odd line, run backwards.
-                        print('Flipping')
                         self._point_order = self._point_order[::-1]
                     elif self.scan_order == 'Random':
                         np.random.shuffle(self._point_order)
-                    print(self._point_order)
 
                 
 
