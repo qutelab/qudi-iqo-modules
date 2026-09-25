@@ -90,14 +90,18 @@ class SimpleScanGui(GuiBase):
             self._mw.control_dockwidget.device_combo.setCurrentIndex(idx)
             self._mw.control_dockwidget.device_combo.blockSignals(False)
 
+        
         # Load current scan parameters from logic StatusVars
+        self._mw.control_dockwidget.scan_order_dropdown.addItems(logic._scan_order_options)
+        
         self._mw.control_dockwidget.set_scan_parameters({
             'x_range':      logic.x_range,
             'time_per':     logic.time_per,
             'time_wait':    logic.time_wait,
             'number_scans': logic.number_scans,
-            'shuffle_x':    logic.shuffle_x,
+            'scan_order':    logic.scan_order,
         })
+        
 
         # Populate device-dependent widgets (static params + x-range label)
         self._update_device_dependent_widgets()

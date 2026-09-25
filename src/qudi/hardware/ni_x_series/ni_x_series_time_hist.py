@@ -293,10 +293,10 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                         np.arange(n_bins + 1) * bin_width_ns, # edges
                         np.zeros(n_bins, dtype=int),    # counts
                     )
-            except ni.DaqError:
+            except ni.DaqError as e:
                 self.terminate_all_tasks()
                 self.module_state.unlock()
-                raise
+                raise e
 
 
         # if not self._sample_on_external_clock:
@@ -332,6 +332,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 if n > 0:
                     buffer = self._data_buffer
                     hist =  self.data[chan][1]
+                    if n>len(buffer):
+                        print('Warning: More samples than buffer size:',n)
                     n = min(n, len(buffer))  # guard against a burst bigger than your scratch buffer
                     reader.read_many_sample_uint32(buffer[:n], number_of_samples_per_channel=n)
                     buffer[n:] = 0
@@ -356,6 +358,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 if n > 0:
                     buffer = self._data_buffer
                     hist =  self.data[chan][1]
+                    if n>len(buffer):
+                        print('Warning: More samples than buffer size:',n)
                     n = min(n, len(buffer))  # guard against a burst bigger than your scratch buffer
                     reader.read_many_sample_uint32(buffer[:n], number_of_samples_per_channel=n)
                     buffer[n:] = 0

@@ -77,7 +77,7 @@ class SimpleScanLogic(LogicBase):
     _time_per = StatusVar(default=1)
     _time_wait = StatusVar(default=0.1) #Time to wait at each step before counting
     _number_scans = StatusVar(default=1)
-    _shuffle_x = StatusVar(default=False)
+    _scan_order = StatusVar(default='False')
     _device_settings_store = StatusVar(default={})
 
     _fit_configs = StatusVar(name='fit_configs', default=None)
@@ -599,15 +599,16 @@ class SimpleScanLogic(LogicBase):
         self._time_wait = value
         self.sigScanParametersUpdated.emit({'time_wait' : value})
 
+    _scan_order_options = ['Forward','Backward','Forward_Backward','Random']
     @property
-    def shuffle_x(self):
-        return self._shuffle_x
+    def scan_order(self):
+        return self._scan_order
 
-    @shuffle_x.setter
-    def shuffle_x(self,value):        
-        assert type(value) == bool, "shuffle_x value must be bool"
-        self._shuffle_x = value
-        self.sigScanParametersUpdated.emit({'shuffle_x' : value})
+    @scan_order.setter
+    def scan_order(self,value):        
+        assert value in self._scan_order_options, f"scan_order value must be in {self._scan_order_options}"
+        self._scan_order = value
+        self.sigScanParametersUpdated.emit({'scan_order' : value})
 
     @QtCore.Slot()
     def set_static_set_parameter_value(self,device,label,value):
@@ -619,7 +620,7 @@ class SimpleScanLogic(LogicBase):
         if f'{self.scan_device}/' in label:
             self.set_static_set_parameter_value(self.scan_device,label,value)
         else:
-            if label in ['x_range','number_scans','time_per','time_wait','shuffle_x']:
+            if label in ['x_range','number_scans','time_per','time_wait','scan_order']:
                 setattr(self,label,value)
             else:
                 raise ValueError('Unexpected label request to be set:',label)
@@ -693,6 +694,7 @@ class SimpleScanLogic(LogicBase):
         with self._threadlock:
             if self.module_state() == 'locked':
                 self.module_state.unlock()  #Stop scanning before turning off device.
+                sleep(0.5)  #Let stop propogate
             self._data_scanner().stop_buffered_acquisition()
             try:
                 self.device_dict[self._device_select].end_scan()
@@ -756,8 +758,8 @@ class SimpleScanLogic(LogicBase):
                         dev_y_len = len(devY)
                         self._raw_data[self._line_counter][self._point_order[self._point_counter]][1:1+dev_y_len] = devY
 
-                self._point_counter+=1
                 self.sigDataPointReady.emit(True)
+                self._point_counter+=1
             
             if self.module_state() != 'locked':  #Scan was stopped, stop here
                 return
@@ -765,11 +767,22 @@ class SimpleScanLogic(LogicBase):
                 if self._scan_worker._running:
                     raise RuntimeError('_scan_worker already running, cannot get new data point.') #This is caught below to log.
                 
-                if (self._point_counter==0):
+                if (self._point_counter==0):  # Each line, check the point order.
+                    print('Setting scan order:',self._line_counter, self._line_counter%2)
                     self._point_order = np.arange(len(self._x_data))
-                    if self._shuffle_x:
+                    
+                    if self.scan_order == 'Forward':
+                        pass
+                    elif self.scan_order == 'Backward':
+                        self._point_order = self._point_order[::-1]
+                    elif self.scan_order == 'Forward_Backward' and self._line_counter%2==1:  #Every odd line, run backwards.
+                        print('Flipping')
+                        self._point_order = self._point_order[::-1]
+                    elif self.scan_order == 'Random':
                         np.random.shuffle(self._point_order)
+                    print(self._point_order)
 
+                
 
                 if self._point_counter>=len(self._x_data):
                     self.sigLineReady.emit(True)
@@ -780,10 +793,12 @@ class SimpleScanLogic(LogicBase):
                         self.stop_scan()  #Call end of scan function and unlock.
                         return
                     else:
-                        self._point_counter=0
+                        self._point_counter=-1  # Iterating happens before scan order checks.
         
                 device.set_x(self._x_data[self._point_order[self._point_counter]])
                 self._sigAcquire.emit(self._time_wait)
+
+                
                 
             except Exception as e:
                 self.stop_scan()  #Stop device, clear lock
@@ -818,7 +833,7 @@ class SimpleScanLogic(LogicBase):
             metadata['Steps per line'] = self.raw_data.shape[1]
             metadata['Time per point (s)'] = self.time_per
             metadata['Wait time (s)'] = self.time_wait
-            metadata['Shuffle Enabled?'] = self.shuffle_x
+            metadata['Scan order'] = self.scan_order
             metadata.update(self._metadata)
 
             # Save raw data in a separate file per data channel

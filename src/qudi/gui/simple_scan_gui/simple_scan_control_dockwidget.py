@@ -3,7 +3,7 @@
 Control dock widget for SimpleScanGui.
 
 Contains all scan parameter controls: device selection, x range, timing, number of
-scans, and shuffle option.
+scans, and scan order option.
 
 Copyright (c) 2021, the qudi developers. See the AUTHORS.md file at the top-level directory of this
 distribution and on <https://github.com/Ulm-IQO/qudi-iqo-modules/>
@@ -124,12 +124,9 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.number_scans_spinbox.setToolTip('Number of full scan repetitions to average')
         form.addRow('Number of Scans:', self.number_scans_spinbox)
 
-        # ── Shuffle X ─────────────────────────────────────────────────────────
-        self.shuffle_x_checkbox = QtWidgets.QCheckBox()
-        self.shuffle_x_checkbox.setToolTip(
-            'Randomise the x-point order within each scan line'
-        )
-        form.addRow('Shuffle X:', self.shuffle_x_checkbox)
+        # ── Scan order ─────────────────────────────────────────────────────────
+        self.scan_order_dropdown = QtWidgets.QComboBox()
+        form.addRow('Scan order:', self.scan_order_dropdown)
 
         # ── Internal signal wiring ────────────────────────────────────────────
         self.device_combo.currentTextChanged.connect(self.sigDeviceChanged)
@@ -145,8 +142,8 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.number_scans_spinbox.editingFinished.connect(
             lambda: self.sigParameterChanged.emit('number_scans', self.number_scans_spinbox.value())
         )
-        self.shuffle_x_checkbox.toggled.connect(
-            lambda state: self.sigParameterChanged.emit('shuffle_x', state)
+        self.scan_order_dropdown.currentTextChanged.connect(
+            lambda value: self.sigParameterChanged.emit('scan_order', value)
         )
 
     # ── Internal slots ────────────────────────────────────────────────────────
@@ -297,7 +294,7 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         params : dict
             May contain any subset of keys:
             ``'x_range'`` → (start, end, n_steps)
-            ``'time_per'``, ``'time_wait'``, ``'number_scans'``, ``'shuffle_x'``
+            ``'time_per'``, ``'time_wait'``, ``'number_scans'``, ``'scan_order'``
         """
         if 'x_range' in params:
             start, end, steps = params['x_range']
@@ -326,10 +323,10 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
             self.number_scans_spinbox.setValue(int(params['number_scans']))
             self.number_scans_spinbox.blockSignals(False)
 
-        if 'shuffle_x' in params:
-            self.shuffle_x_checkbox.blockSignals(True)
-            self.shuffle_x_checkbox.setChecked(bool(params['shuffle_x']))
-            self.shuffle_x_checkbox.blockSignals(False)
+        if 'scan_order' in params:
+            self.scan_order_dropdown.blockSignals(True)
+            self.scan_order_dropdown.setCurrentText(str(params['scan_order']))
+            self.scan_order_dropdown.blockSignals(False)
 
         self.update_static_set_parameters(params)  #This handles parsing and finding the appropriate ones.
 
@@ -342,6 +339,6 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.time_per_spinbox.setEnabled(enabled)
         self.time_wait_spinbox.setEnabled(enabled)
         self.number_scans_spinbox.setEnabled(enabled)
-        self.shuffle_x_checkbox.setEnabled(enabled)
+        self.scan_order_dropdown.setEnabled(enabled)
         for widget in self._static_param_widgets.values():
             widget.setEnabled(enabled)
