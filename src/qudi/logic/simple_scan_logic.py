@@ -683,6 +683,11 @@ class SimpleScanLogic(LogicBase):
                 return
     
             self.module_state.lock()
+            if self._number_scans>len(self._raw_data):   #Extend scan raw_data
+                data = self._raw_data
+                self._raw_data = np.full((self._number_scans,len(self._x_data),len(self._data_header)),np.nan)
+                self._raw_data[:len(data)] = data
+
             self.device_dict[self._device_select].start_scan(leave_x=True)
             self.sigScanStateUpdated.emit(True)
             self._scan()  # Re-start the scanner loop.
@@ -701,6 +706,9 @@ class SimpleScanLogic(LogicBase):
             except Exception as e:
                 self.log.error(f'Error stopping scan: {e}')
             
+            self._raw_data = self._raw_data[:self._line_counter]  #Clip incomplete lines
+            self._point_counter=0  #If continued, restart line.
+            self.sigScanDataUpdated.emit()
             self.sigScanStateUpdated.emit(False)
 
     @QtCore.Slot()
@@ -742,6 +750,9 @@ class SimpleScanLogic(LogicBase):
         with self._threadlock:
             scanner = self._data_scanner()
             device = self.device_dict[self._device_select]
+
+            if self.module_state() != 'locked':  #Scan was stopped, stop here
+                return
             
             if point_ready: 
                 # _raw_data is initialized in start_scan, so we just need to populate it here.
@@ -761,11 +772,20 @@ class SimpleScanLogic(LogicBase):
                 self.sigDataPointReady.emit(True)
                 self._point_counter+=1
             
-            if self.module_state() != 'locked':  #Scan was stopped, stop here
-                return
+            
             try:
                 if self._scan_worker._running:
                     raise RuntimeError('_scan_worker already running, cannot get new data point.') #This is caught below to log.
+                    
+                if self._point_counter>=len(self._x_data):
+                    self.sigLineReady.emit(True)
+                    self._line_counter+=1
+                    if self._line_counter>=self._number_scans:
+                        self.sigScanComplete.emit(True)
+                        self.stop_scan()  #Call end of scan function and unlock.
+                        return
+                    else:
+                        self._point_counter=0
                 
                 if (self._point_counter==0):  # Each line, check the point order.
                     self._point_order = np.arange(len(self._x_data))
@@ -781,16 +801,7 @@ class SimpleScanLogic(LogicBase):
 
                 
 
-                if self._point_counter>=len(self._x_data):
-                    self.sigLineReady.emit(True)
-                    #print('Done scanning line',self._line_counter)
-                    self._line_counter+=1
-                    if self._line_counter>=self._number_scans:
-                        self.sigScanComplete.emit(True)
-                        self.stop_scan()  #Call end of scan function and unlock.
-                        return
-                    else:
-                        self._point_counter=-1  # Iterating happens before scan order checks.
+
         
                 device.set_x(self._x_data[self._point_order[self._point_counter]])
                 self._sigAcquire.emit(self._time_wait)

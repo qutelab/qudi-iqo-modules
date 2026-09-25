@@ -109,8 +109,8 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.time_wait_spinbox = ScienDSpinBox()
         self.time_wait_spinbox.setDecimals(4)
         self.time_wait_spinbox.setSuffix('s')
-        self.time_wait_spinbox.setMinimum(1e-6)
-        self.time_wait_spinbox.setValue(0.1)
+        self.time_wait_spinbox.setMinimum(0)
+        self.time_wait_spinbox.setValue(0)
         self.time_wait_spinbox.setToolTip(
             'Settling time after moving to each x position before recording'
         )
