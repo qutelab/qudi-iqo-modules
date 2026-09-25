@@ -93,7 +93,7 @@ class SimpleScanGui(GuiBase):
         
         # Load current scan parameters from logic StatusVars
         self._mw.control_dockwidget.scan_order_dropdown.addItems(logic._scan_order_options)
-        
+
         self._mw.control_dockwidget.set_scan_parameters({
             'x_range':      logic.x_range,
             'time_per':     logic.time_per,
@@ -101,7 +101,10 @@ class SimpleScanGui(GuiBase):
             'number_scans': logic.number_scans,
             'scan_order':    logic.scan_order,
         })
-        
+
+
+        # Populate fit options
+        self._mw.plot_widget.fit_model_select.addItems(self._simple_scan_logic()._fit_config_model.configuration_names)
 
         # Populate device-dependent widgets (static params + x-range label)
         self._update_device_dependent_widgets()
@@ -184,6 +187,12 @@ class SimpleScanGui(GuiBase):
         self._mw.plot_widget._normalize_checkbox.stateChanged.connect(
             lambda _: self._update_scan_data()
         )
+        self._mw.plot_widget.fit_button.clicked.connect(
+            lambda _: self._simple_scan_logic().do_fit(
+                self._mw.plot_widget.fit_model_select.currentText(),
+                self._mw.plot_widget.x_channel_index,
+                self._mw.plot_widget.y_channel_index)
+        )
 
     def __disconnect_control_signals(self):
         self._mw.action_toggle_scan.triggered[bool].disconnect(self._toggle_scan_clicked)
@@ -199,6 +208,7 @@ class SimpleScanGui(GuiBase):
         self._mw.plot_widget.x_channel_combo.currentIndexChanged.disconnect()
         self._mw.plot_widget.y_channel_combo.currentIndexChanged.disconnect()
         self._mw.plot_widget._normalize_checkbox.stateChanged.disconnect()
+        self._mw.plot_widget.fit_button.clicked.disconnect()
 
     def __connect_logic_signals(self):
         logic = self._simple_scan_logic()
@@ -211,6 +221,9 @@ class SimpleScanGui(GuiBase):
         logic.sigScanDataUpdated.connect(
             self._update_scan_data, QtCore.Qt.ConnectionType.QueuedConnection
         )
+        logic.sigFitUpdated.connect(
+                    self._update_fit_results, QtCore.Qt.ConnectionType.QueuedConnection
+                )
         logic.sigLineReady.connect(
             self._on_line_ready, QtCore.Qt.ConnectionType.QueuedConnection
         )
@@ -229,6 +242,7 @@ class SimpleScanGui(GuiBase):
         logic.sigScanStateUpdated.disconnect(self._update_scan_state)
         logic.sigScanParametersUpdated.disconnect(self._update_scan_parameters)
         logic.sigScanDataUpdated.disconnect(self._update_scan_data)
+        logic.sigFitUpdated.disconnect(self._update_fit_results)
         logic.sigLineReady.disconnect(self._on_line_ready)
         logic.sigDataPointReady.disconnect(self._on_data_point_ready)
         logic.sigScanComplete.disconnect(self._on_scan_complete)
@@ -333,6 +347,10 @@ class SimpleScanGui(GuiBase):
             y_label=y_label, y_unit=y_unit,
         )
 
+    @QtCore.Slot()
+    def _update_fit_results(self,fit_results,xidx,yidx):
+        self._mw.plot_widget.update_fit_curve(fit_results)
+
     def _get_x_extent(self):
         """Return (x_min, x_max) from the configured scan range, or None."""
         try:
@@ -434,3 +452,5 @@ class SimpleScanGui(GuiBase):
         """Write the new value back into the logic's static_set_parameters dict."""
         logic = self._simple_scan_logic()
         logic.set_static_set_parameter_value(logic.scan_device, label, value)
+
+        

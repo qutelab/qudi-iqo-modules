@@ -83,7 +83,17 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         self.average_plot.setLabel('left', 'Signal')
         self.average_plot.showGrid(x=True, y=True, alpha=0.5)
         self.average_plot.setMinimumHeight(200)
+        self.average_plot.fit_plot = self.average_plot.plot()
+        self.average_plot.fit_plot.setPen(pg.mkPen(color='orange'))
         main_layout.addWidget(self.average_plot, 1,0)
+
+        fit_layout = QtWidgets.QVBoxLayout()
+        main_layout.addLayout(fit_layout, 1,1)
+        self.fit_button = QtWidgets.QPushButton('Fit signal')
+        fit_layout.addWidget(self.fit_button)
+        self.fit_model_select = QtWidgets.QComboBox()
+        fit_layout.addWidget(self.fit_model_select)
+        fit_layout.addStretch()
 
         # ── 2-D raw scan image ────────────────────────────────────────────────
 
@@ -234,7 +244,7 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         channel_changed = (xi != self._prev_xi) or (yi != self._prev_yi)
         self._prev_xi = xi
         self._prev_yi = yi
-
+        self.update_fit_curve(None)  #If data changes, clear fit plot
         if (signal_data is not None
                 and signal_data.ndim == 2
                 and signal_data.shape[1] > max(xi, yi)):
@@ -268,6 +278,26 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         # ── 2-D image ─────────────────────────────────────────────────────────
         self._update_image(raw_data, x_extent)
 
+    def update_fit_curve(self,fit_results=None):
+        if fit_results is not None:
+            fit_result = fit_results.get(f'{self.x_channel_index}-{self.y_channel_index}',None)
+            if fit_result is not None:
+                fit_data = fit_result[1].high_res_best_fit
+                self.average_plot.fit_plot.setData(*fit_data)
+                self.fit_pop = QtWidgets.QDialog()
+                fit_pop_layout = QtWidgets.QVBoxLayout()
+                self.fit_pop.setLayout(fit_pop_layout)
+                fit_pop_text = QtWidgets.QTextEdit()
+                fit_pop_text.setText(fit_result[1].fit_report())
+                fit_pop_text.setReadOnly(True)
+                fit_pop_layout.addWidget(fit_pop_text)
+                self.fit_pop.show()
+            else:
+                self.average_plot.fit_plot.setData([],[])
+        else:
+            self.average_plot.fit_plot.setData([],[])
+
+
     def update_image_data(self, raw_data, x_extent=None, y_label='Signal', y_unit=''):
         """
         Update only the 2-D image — suitable for per-data-point refreshes
@@ -288,6 +318,7 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
     def clear_data(self):
         """Clear both plots."""
         self.average_plot.data = None
+        self.update_fit_curve(None)
         self._image_item.clear()
         self._last_image_data = None
         self._last_x_extent = (0.0, 1.0)

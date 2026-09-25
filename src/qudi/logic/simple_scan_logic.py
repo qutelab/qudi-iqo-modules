@@ -80,7 +80,8 @@ class SimpleScanLogic(LogicBase):
     _scan_order = StatusVar(default='False')
     _device_settings_store = StatusVar(default={})
 
-    _fit_configs = StatusVar(name='fit_configs', default=None)
+    #_fit_configs = StatusVar(name='fit_configs', default=None)
+
 
     # Internal signals
     _sigNextLine = QtCore.Signal()
@@ -94,10 +95,10 @@ class SimpleScanLogic(LogicBase):
     sigScanComplete = QtCore.Signal(bool)   #True if successful, False if unsucessful
     sigLineReady = QtCore.Signal(bool) #True if successful, False if unsucessful
     sigDataPointReady = QtCore.Signal(bool)  #True if successful, False if unsucessful
-    sigFitUpdated = QtCore.Signal(object, str, int)
+    sigFitUpdated = QtCore.Signal(object, int, int)
     _sigAcquire = QtCore.Signal(float)
 
-    __default_fit_configs = (
+    _fit_configs = (  #__default_fit_configs
         {'name'             : 'Gaussian Dip',
          'model'            : 'Gaussian',
          'estimator'        : 'Dip',
@@ -117,7 +118,18 @@ class SimpleScanLogic(LogicBase):
          'model'            : 'DoubleLorentzian',
          'estimator'        : 'Dips',
          'custom_parameters': None},
+
+        {'name'             : 'Gaussian',
+         'model'            : 'Gaussian',
+         'estimator'        : 'Peak',
+         'custom_parameters': None},
+         
+        {'name'             : 'Two Gaussians',
+         'model'            : 'DoubleGaussian',
+         'estimator'        : 'Peaks',
+         'custom_parameters': None},
     )
+
     
     class ScanDevice:
         def __init__(self, name:str, x_setter:Callable, y_getter:Callable=None, len_y:int=None, 
@@ -311,9 +323,9 @@ class SimpleScanLogic(LogicBase):
         self._line_counter = 0
         self._point_counter = 0        
 
-        # self._fit_container = None
-        # self._fit_config_model = None
-        # self._fit_results = None
+        self._fit_container = None
+        self._fit_config_model = None
+        self._fit_results = {}
 
 
 
@@ -325,6 +337,7 @@ class SimpleScanLogic(LogicBase):
         self._scan_worker = self.ScanWorker(self._data_scanner)
         self._scan_worker.moveToThread(self._acquire_thread)
         self._acquire_thread.start()
+
 
         #Below is where we set up the scan devices. Each device needs a name, a function to set the x value, 
         #  and optionally a function to get y value(s) and labels/units for the data. The x setter will be called
@@ -474,9 +487,9 @@ class SimpleScanLogic(LogicBase):
 
 
         # # Set up fit model and container
-        # self._fit_config_model = FitConfigurationsModel(parent=self)
-        # self._fit_config_model.load_configs(self._fit_configs)
-        # self._fit_container = FitContainer(parent=self, config_model=self._fit_config_model)
+        self._fit_config_model = FitConfigurationsModel(parent=self)
+        self._fit_config_model.load_configs(self._fit_configs)
+        self._fit_container = FitContainer(parent=self, config_model=self._fit_config_model)
 
 
         # Connect signals
@@ -513,24 +526,23 @@ class SimpleScanLogic(LogicBase):
     #         return self.__default_fit_configs
     #     return value
 
-    # @property
-    # def fit_config_model(self):
-    #     return self._fit_config_model
+    @property
+    def fit_config_model(self):
+        return self._fit_config_model
 
-    # @property
-    # def fit_container(self):
-    #     return self._fit_container
+    @property
+    def fit_container(self):
+        return self._fit_container
 
-    # @property
-    # def fit_results(self):
-    #     return self._fit_results.copy()
+    @property
+    def fit_results(self):
+        return self._fit_results#.copy()
     
-    # def clear_all_fits(self):
-    #     if self._fit_results is not None:
-    #         for channel, results in self._fit_results.items():
-    #             for range_index in range(len(results)):
-    #                 self._fit_results[channel][range_index] = None
-    #                 self.sigFitUpdated.emit(self._fit_results[channel][range_index], channel, range_index)
+    def clear_all_fits(self):
+        current_fit_keys = self._fit_results.keys()
+        self._fit_results = {}
+        for key in current_fit_keys:
+            self.sigFitUpdated.emit(self._fit_results, *[int(idx) for idx in key.split('-')])
 
     @property
     def scan_device(self):
@@ -548,15 +560,15 @@ class SimpleScanLogic(LogicBase):
 
     @property
     def signal_data(self):
-        return self._signal_data.copy()
+        return self._signal_data#.copy()
 
     @property
     def raw_data(self):
-        return self._raw_data.copy()
+        return self._raw_data#.copy()
 
     @property
     def x_data(self):
-        return self._x_data.copy()
+        return self._x_data#.copy()
     
     @property
     def x_range(self):
@@ -723,6 +735,7 @@ class SimpleScanLogic(LogicBase):
             self._data_units = device._data_units + [scanner._channel_units[key.split('-')[0]] for key in self._scanner_channels]
             self._data_header = [f'{self._data_labels[ii]} ({self._data_units[ii]})' for ii in range(len(self._data_labels))]
             self._raw_data = np.full((self._number_scans,len(self._x_data),len(self._data_header)),np.nan)
+            self._fit_results = {}
             self._line_counter=0
             self._point_counter=0
             self.sigScanDataUpdated.emit()
@@ -904,27 +917,28 @@ class SimpleScanLogic(LogicBase):
         signal_y_data = self._signal_data[:,yidx]
 
 
-        
-        # fit_result = self._fit_results[channel][range_index]
-        # if fit_result is not None:
-        #     fit_x, fit_y = fit_result[1].high_res_best_fit
-        # unit = self.data_constraints.channel_units[channel]
+        if f'{xidx}-{yidx}' in self._fit_results:
+             fit_result = self._fit_results[f'{xidx}-{yidx}']
+             if fit_result is not None:
+                 fit_x, fit_y = fit_result[1].high_res_best_fit
+        else:
+            fit_result = None
 
         # Determine SI unit scaling for signal
         scaled = ScaledFloat(np.max(signal_x_data))
         signal_xunit_prefix = scaled.scale
         if signal_xunit_prefix:
             signal_x_data = signal_x_data / scaled.scale_val
-            # if fit_result is not None:
-            #     fit_y = fit_y / scaled.scale_val
+            if fit_result is not None:
+                fit_x = fit_x / scaled.scale_val
         signal_xlabel = f'{self._data_labels[xidx]} ({signal_xunit_prefix}{self._data_units[xidx]})'
 
         scaled = ScaledFloat(np.max(signal_y_data))
         signal_yunit_prefix = scaled.scale
         if signal_yunit_prefix:
             signal_y_data = signal_y_data / scaled.scale_val
-            # if fit_result is not None:
-            #     fit_y = fit_y / scaled.scale_val
+            if fit_result is not None:
+                fit_y = fit_y / scaled.scale_val
         signal_ylabel = f'{self._data_labels[yidx]} ({signal_yunit_prefix}{self._data_units[yidx]})'
 
         # Determine SI unit scaling for raw x-axis
@@ -932,8 +946,6 @@ class SimpleScanLogic(LogicBase):
         x_unit_prefix = scaled.scale
         if x_unit_prefix:
             x_data = x_data / scaled.scale_val
-            # if fit_result is not None:
-            #     fit_x = fit_x / scaled.scale_val
         x_label = f'{self._data_labels[0]} ({x_unit_prefix}{self._data_units[0]})'
 
         # Determine SI unit scaling for raw y-axis
@@ -949,8 +961,8 @@ class SimpleScanLogic(LogicBase):
         # plot signal data
         ax_signal.plot(signal_x_data, signal_y_data, linestyle=':', linewidth=0.5, marker='o')
         # Include fit curve if there is one
-        # if fit_result is not None:
-        #     ax_signal.plot(fit_x, fit_y, marker='None')
+        if fit_result is not None:
+            ax_signal.plot(fit_x, fit_y, marker='None')
         ax_signal.set_xlabel(signal_xlabel)
         ax_signal.set_ylabel(signal_ylabel)
         ax_signal.set_xlim(min(x_data), max(x_data))
@@ -1002,68 +1014,33 @@ class SimpleScanLogic(LogicBase):
         return fig
     
 
-    if False: #None of these from ODMR scan have been updated yet.
-        @QtCore.Slot(str, str, int)
-        def do_fit(self, fit_config, channel, range_index):
-            """
-            Execute the currently configured fit on the measurement data. Optionally on passed data
-            """
-            if fit_config != 'No Fit' and fit_config not in self._fit_config_model.configuration_names:
-                self.log.error(f'Unknown fit configuration "{fit_config}" encountered.')
-                return
+    @QtCore.Slot(str, str, int)
+    def do_fit(self, fit_config, xidx, yidx):
+        """
+        Execute the currently configured fit on the measurement data. Optionally on passed data
+        """
+        if fit_config != 'No Fit' and fit_config not in self._fit_config_model.configuration_names:
+            self.log.error(f'Unknown fit configuration "{fit_config}" encountered.')
+            return
 
-            x_data = self._frequency_data[range_index]
-            y_data = self._signal_data[channel][range_index]
+        if self.signal_data is None:
+            return
+        
+        signal_x_data = self._signal_data[:,xidx]
+        signal_y_data = self._signal_data[:,yidx]
 
-            try:
-                fit_config, fit_result = self._fit_container.fit_data(fit_config, x_data, y_data)
-            except:
-                self.log.exception('Data fitting failed:')
-                return
+        try:
+            fit_config, fit_result = self._fit_container.fit_data(fit_config, signal_x_data, signal_y_data)
+        except Exception as e:
+            self.log.exception(f'Data fitting failed: {e}')
+            self._fit_results[f'{xidx}-{yidx}'] = None
 
-            if fit_result is not None:
-                self._fit_results[channel][range_index] = (fit_config, fit_result)
-            else:
-                self._fit_results[channel][range_index] = None
-            self.sigFitUpdated.emit(self._fit_results[channel][range_index], channel, range_index)
+        if fit_result is not None:
+            self._fit_results[f'{xidx}-{yidx}'] = (fit_config, fit_result)
+        else:
+            self._fit_results[f'{xidx}-{yidx}'] = None
+        self.sigFitUpdated.emit(self._fit_results, xidx, yidx)
 
-        def _get_metadata(self):
-            metadata = {'Number of Frequency Sweeps (#)': self._elapsed_sweeps,
-                        'Start Frequencies (Hz)': tuple(rng[0] for rng in self._scan_frequency_ranges),
-                        'Stop Frequencies (Hz)': tuple(rng[1] for rng in self._scan_frequency_ranges),
-                        'Step sizes (Hz)': tuple(rng[2] for rng in self._scan_frequency_ranges),
-                        'Data Rate (Hz)': self._data_rate,
-                        'Oversampling factor (Hz)': self._oversampling_factor,
-                        'Channel Name': ''}
-            for fit_channel in self._fit_results:
-                for ii, fit_result in enumerate(self._fit_results[fit_channel]):
-                    if fit_result:
-                        export_dict = FitContainer.dict_result(fit_result[1])
-                        metadata[f'fit result (channel "{fit_channel}" range {ii})'] = export_dict
-            return metadata
-
-        def _get_raw_column_headers(self, data_channel):
-            channel_unit = self.data_constraints.channel_units[data_channel]
-            return 'Frequency (Hz)', f'Scan Data ({channel_unit})'
-
-        def _get_signal_column_headers(self):
-            channel_units = self.data_constraints.channel_units
-            column_headers = ['Frequency (Hz)']
-            column_headers.extend(f'{ch} ({channel_units[ch]})' for ch in self._signal_data)
-            return tuple(column_headers)
-
-        def _join_channel_raw_data(self, channel):
-            """ join raw data for one channel with corresponding frequency data into a single numpy
-            array for saving.
-
-            @param str channel: The channel name for which to join the raw data
-            """
-            channel_data = self._raw_data[channel]
-            # Filter raw data to get rid of invalid values (nan or inf)
-            joined_data = np.concatenate([raw[:, :self._elapsed_sweeps] for raw in channel_data],
-                                        axis=0)
-            # add frequency data as first column
-            return np.column_stack((np.concatenate(self._frequency_data), joined_data))
 
 
     
