@@ -25,10 +25,7 @@ from qudi.logic.spectrometer_logic import SpectrometerLogic
 from qudi.logic.simple_scan_logic import SimpleScanLogic
 
 import importlib
-try:
-    importlib.reload(grid_maker)
-except NameError:
-    import qudi.gui.automate.grid_maker as grid_maker
+import qudi.gui.automate.grid_maker as grid_maker
 
 from time import sleep
 
@@ -420,7 +417,7 @@ class ScriptBuilderGUI(GuiBase):
         #     'spectrometer_logic': self.spectrometer_logic,
         #     'simple_scan_logic': self.simple_scan_logic
         #     }
-        
+        importlib.reload(grid_maker)
         self._functionCatalog = FunctionCatalog(self)
         self._grid_maker = grid_maker.GridApp(self)
         self._mw = ScriptBuilder(self)

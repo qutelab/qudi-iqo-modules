@@ -99,16 +99,6 @@ class SimpleScanLogic(LogicBase):
     _sigAcquire = QtCore.Signal(float)
 
     _fit_configs = (  #__default_fit_configs
-        {'name'             : 'Gaussian Dip',
-         'model'            : 'Gaussian',
-         'estimator'        : 'Dip',
-         'custom_parameters': None},
-
-        {'name'             : 'Two Gaussian Dips',
-         'model'            : 'DoubleGaussian',
-         'estimator'        : 'Dips',
-         'custom_parameters': None},
-
         {'name'             : 'Lorentzian Dip',
          'model'            : 'Lorentzian',
          'estimator'        : 'Dip',
@@ -116,6 +106,21 @@ class SimpleScanLogic(LogicBase):
 
         {'name'             : 'Two Lorentzian Dips',
          'model'            : 'DoubleLorentzian',
+         'estimator'        : 'Dips',
+         'custom_parameters': None},
+
+        {'name'             : 'Three Lorentzian Dips',
+         'model'            : 'TripleLorentzian',
+         'estimator'        : 'Dips',
+         'custom_parameters': None},
+
+        {'name'             : 'Gaussian Dip',
+         'model'            : 'Gaussian',
+         'estimator'        : 'Dip',
+         'custom_parameters': None},
+
+        {'name'             : 'Two Gaussian Dips',
+         'model'            : 'DoubleGaussian',
          'estimator'        : 'Dips',
          'custom_parameters': None},
 

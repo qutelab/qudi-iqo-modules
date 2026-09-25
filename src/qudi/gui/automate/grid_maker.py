@@ -64,9 +64,32 @@ class GridApp(qw.QWidget):
         self._default_drag_event = self.vb.mouseDragEvent
         self.vb.mouseDragEvent = self._vb_mouse_drag_event
 
+
+        scaleLayout = qw.QVBoxLayout()
+        layout.addLayout(scaleLayout)
+        scaleLayout.addWidget(qw.QLabel("Max value"))
+        self.max_spinbox = ScienDSpinBox()
+        scaleLayout.addWidget(self.max_spinbox)
+        self.maxP_spinbox = ScienDSpinBox()
+        self.maxP_spinbox.setSuffix('%')
+        scaleLayout.addWidget(self.maxP_spinbox)
+        scaleLayout.addStretch()
+        scaleLayout.addWidget(qw.QLabel("Min value"))
+        self.min_spinbox = ScienDSpinBox()
+        scaleLayout.addWidget(self.min_spinbox)
+        self.minP_spinbox = ScienDSpinBox()
+        self.minP_spinbox.setSuffix('%')
+        scaleLayout.addWidget(self.minP_spinbox)
+
+        self.max_spinbox.valueChanged.connect(self.update_scale)
+        self.min_spinbox.valueChanged.connect(self.update_scale)
+        self.maxP_spinbox.valueChanged.connect(self.update_scaleP)
+        self.minP_spinbox.valueChanged.connect(self.update_scaleP)
+
+        
+
         
         inputLayout = qw.QGridLayout()
-
         # Corner inputs
         self.corners = [[ScienDSpinBox(), ScienDSpinBox()],
                         [ScienDSpinBox(), ScienDSpinBox()],
@@ -144,11 +167,67 @@ class GridApp(qw.QWidget):
     def load_data(self):
         self.data = self.scanning_data_logic().get_last_history_entry(('x','y'))[0]._data[0]
         self.extent = self.scanning_data_logic().get_last_history_entry(('x','y'))[0].settings.range
+        self.max_spinbox.setValue(np.max(self.data))
+        self.min_spinbox.setValue(np.min(self.data))
 
     def update_image(self):
         (xmin, xmax), (ymin, ymax) = self.extent
         self.img.setImage(self.data)
         self.img.setRect(QtCore.QRectF(xmin, ymin, xmax - xmin, ymax - ymin))
+
+    def update_scale(self):
+        self.max_spinbox.blockSignals(True)
+        self.min_spinbox.blockSignals(True)
+        self.maxP_spinbox.blockSignals(True)
+        self.minP_spinbox.blockSignals(True)
+
+        maxV = float(self.max_spinbox.value())
+        minV = float(self.min_spinbox.value())
+        data_max = np.max(self.data)
+        data_min = np.min(self.data)
+        
+        if maxV<minV: #Keep in correct order
+            self.max_spinbox.setValue(minV)
+        if minV>maxV:
+            self.min_spinbox.setValue(maxV)
+        
+        minP = 100*(minV-data_min)/(data_max-data_min)
+        maxP = 100*(maxV-data_min)/(data_max-data_min)
+        self.minP_spinbox.setValue(minP)
+        self.maxP_spinbox.setValue(maxP)
+        self.img.setLevels([minV,maxV])
+
+        self.max_spinbox.blockSignals(False)
+        self.min_spinbox.blockSignals(False)
+        self.maxP_spinbox.blockSignals(False)
+        self.minP_spinbox.blockSignals(False)
+
+    def update_scaleP(self):
+        self.max_spinbox.blockSignals(True)
+        self.min_spinbox.blockSignals(True)
+        self.maxP_spinbox.blockSignals(True)
+        self.minP_spinbox.blockSignals(True)
+
+        maxP = float(self.maxP_spinbox.value())
+        minP = float(self.minP_spinbox.value())
+        data_max = np.max(self.data)
+        data_min = np.min(self.data)
+
+        if maxP<minP: #Keep in correct order
+            self.max_spinbox.setValue(minP)
+        if minP>maxP:
+            self.min_spinbox.setValue(maxP)
+        
+        minV = data_min + (data_max-data_min)*minP/100
+        maxV = data_min + (data_max-data_min)*maxP/100
+        self.min_spinbox.setValue(minV)
+        self.max_spinbox.setValue(maxV)
+        self.img.setLevels([minV,maxV])
+
+        self.max_spinbox.blockSignals(False)
+        self.min_spinbox.blockSignals(False)
+        self.maxP_spinbox.blockSignals(False)
+        self.minP_spinbox.blockSignals(False)
 
     def set_pick_mode(self, corner):
         self.pick_mode = corner
