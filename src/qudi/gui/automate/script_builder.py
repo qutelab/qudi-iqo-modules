@@ -3,7 +3,6 @@ import os
 import json
 import time
 from turtle import position
-#import pandas as pd
 
 from qudi.core.module import GuiBase
 from qudi.core.connector import Connector
@@ -17,12 +16,14 @@ from PySide6 import QtCore
 from PySide6.QtCore import Qt
 
 from qudi.util.mutex import RecursiveMutex, Mutex
+from qudi.core.configoption import ConfigOption
 #Logic imports for automation functions
 from qudi.logic.scanning_probe_logic import ScanningProbeLogic
 from qudi.logic.scanning_optimize_logic import ScanningOptimizeLogic
 from qudi.logic.scanning_data_logic import ScanningDataLogic
 from qudi.logic.spectrometer_logic import SpectrometerLogic
 from qudi.logic.simple_scan_logic import SimpleScanLogic
+
 
 import importlib
 import qudi.gui.automate.grid_maker as grid_maker
@@ -33,14 +34,12 @@ from time import sleep
 # Example config, make sure to extend as new connectors are added:
 # 	script_builder:
 # 			module.Class: automate.script_builder.ScriptBuilderGUI
-# 		connect:
-# 		    optimize_logic : scanning_optimize_logic
-# 			scanning_logic : scanning_probe_logic
-# 			scanning_data_logic : scanning_data_logic
-# 			spectrometer_logic : spectrometer_logic
-# 			simple_scan_logic : simple_scan_logic
+# 		options:
+#           has_picoharp : True  #If picoharp with snapi is installed and available
 
 ## To add new functions: Populate the entry in FunctionCatalog, including the register decorator and finish functions
+##  then ensure that the required logic is loaded in the ScriptBuilderGUI _logic_dict
+##  or connect a custom script as seen for the picoharp.
 
 
 # ---------------------- FUNCTION CATALOG ----------------------
@@ -67,6 +66,8 @@ class FunctionCatalog(QtCore.QObject):
     def _discover_functions(self):
         for name, connector in self.parent._connectors.items():
             setattr(self, name, connector)
+        for name, custom in self.parent._custom.items():
+            setattr(self,name,custom)
         funcs = {}
         for attr_name in dir(self):
             if attr_name.startswith("_"):
@@ -306,6 +307,39 @@ class FunctionCatalog(QtCore.QObject):
             else:
                 self.sigFuncComplete.emit(f"Scan failed")
 
+    
+    @register(dep='picoharp', params={
+        "max_time": {"type": int, "default": lambda ctx: 30000},
+    })
+    def measure_lifetime(self, max_time):
+        # Implementation for recording spectrum
+        self.picoharp.max_time = max_time
+
+        self.picoharp.sigWorkerFinished.connect(self.finish_measure_lifetime, Qt.QueuedConnection)
+        self._sigInterrupt.connect(lambda : self.picoharp._thread.requestInterrupt())
+        self.picoharp.sigAcquireData.emit()
+        #self.sigInterrupt.connect(self.spectrometer_logic().stop)  # Tell interrupt signal how to stop function
+
+    def finish_measure_lifetime(self,error):
+        if not self._func_running:
+            return  # State update signals will be emitted before finished.
+        self._func_running = False
+        # print('Finish spectrum')
+        self._sigInterrupt.disconnect()
+        self.picoharp.sigWorkerFinished.disconnect()
+        if error is not None:
+            self.log.error(f'Error during lifetime measurement: {error}')
+            return
+
+        self.picoharp.save_data(root_dir=self.folder_path)
+        self.sigFuncComplete.emit(f"Recorded lifetime")
+
+    @register(dep='picoharp', )
+    def pico_count_rate(self):
+        self.picoharp.save_count_rate(root_dir=self.folder_path)
+        self.sigFuncComplete.emit(f"Recorded pico count rate")
+
+
     _loop_list = []  #Allow for nested loops
     @register(params={"loop_count": {"type": int, "default": 1}})
     def LOOP_START(self, loop_count):
@@ -390,6 +424,7 @@ class ParamDialog(QDialog):
 from time import sleep
 # ---------------------- MAIN GUI ----------------------
 class ScriptBuilderGUI(GuiBase):
+    _has_picoharp = ConfigOption(name='has_picoharp', default=False)
     #optimize_logic = Connector(interface=ScanningOptimizeLogic)
     #scanning_logic = Connector(interface=ScanningProbeLogic)
     #scanning_data_logic = Connector(interface=ScanningDataLogic)
@@ -404,19 +439,13 @@ class ScriptBuilderGUI(GuiBase):
     }
     for var_name, (logic_module,interface) in _logic_dict.items():
         locals()[var_name] = Connector(interface=interface,optional=True)
+    
         
     #spectrometer_logic = Connector(interface=SpectrometerLogic, optional=True)
     #simple_scan_logic = Connector(interface=SimpleScanLogic, optional=True)
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # self._connectors = {
-        #     'optimize_logic': self.optimize_logic,
-        #     'scanning_logic': self.scanning_logic,
-        #     'scanning_data_logic': self.scanning_data_logic,
-        #     'spectrometer_logic': self.spectrometer_logic,
-        #     'simple_scan_logic': self.simple_scan_logic
-        #     }
         importlib.reload(grid_maker)
         self._functionCatalog = FunctionCatalog(self)
         self._grid_maker = grid_maker.GridApp(self)
@@ -424,6 +453,7 @@ class ScriptBuilderGUI(GuiBase):
 
     def on_activate(self):
         self._connectors = {}
+        self._custom = {}
         module_manager = self._qudi_main.module_manager
         for var_name, (logic_module, interface) in self._logic_dict.items():
             if logic_module not in module_manager:
@@ -442,6 +472,16 @@ class ScriptBuilderGUI(GuiBase):
             if var_name == 'scanning_logic' and self._connectors[var_name] is None:
                 raise RuntimeError(f'Failed to load, script builder requires {logic_module}.')
 
+        #Custom connections:
+        if self._has_picoharp:
+            try:
+                from qudi.gui.automate.custom import pico_snapi
+                self._custom['picoharp'] = pico_snapi.PicoWorker()
+            except:
+                self._custom['picoharp'] = None
+        else:
+            self._custom['picoharp'] = None
+
         self._functionCatalog._discover_functions()
         self._mw._populate_list()
 
@@ -451,8 +491,8 @@ class ScriptBuilderGUI(GuiBase):
             self._mw.grid_btn.setEnabled(False)
             pass
 
-
         self.show()
+
     def on_deactivate(self):
         self._mw.finish_script(interrupted=True)
         self._mw.close()
@@ -460,6 +500,9 @@ class ScriptBuilderGUI(GuiBase):
         for name,connector in self._connectors.items():
             if connector is not None:
                 connector.disconnect()
+        for name,custom in self._custom.items():
+            if hasattr(custom,'shutdown'):
+                custom.shutdown()
 
         delattr(self,'_mw')
         delattr(self,'_grid_maker')
