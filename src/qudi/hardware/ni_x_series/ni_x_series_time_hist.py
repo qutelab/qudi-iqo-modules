@@ -30,12 +30,6 @@ from qudi.core.configoption import ConfigOption
 from qudi.util.helpers import natural_sort
 from qudi.interface.pulse_time_histogram_interface import PulseTimeHistogramInterface
 
-import importlib
-try:
-    importlib.reload(NIXSeriesPulseTimingInput)
-except:
-    pass
-
 
 
 class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
@@ -53,9 +47,11 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         module.Class: 'ni_x_series.ni_x_series_time_hist.NIXSeriesPulseTimingInput'
         options:
             device_name : Dev1  #NI Name of DAQ device
+            # Digital channels can be source or source-trigger ; if trigger provided, trigger_source below is ignored for that combination
             digital_channels :  # Digital channels available to acquire on
                 PFI8
-            trigger_source : PFI0  # Source of timing reset (t=0) trigger
+                PFI8-PFI3
+            trigger_source : PFI0  # Source of timing reset (t=0) trigger ; optional if provided as combo above
             trigger_edge : RISING  # Are digital/trigger sources rising/falling edge?
 
     """
@@ -63,7 +59,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
     # config options
     _device_name = ConfigOption(name='device_name', default='Dev1', missing='warn')
     _digital_channels = ConfigOption(name='digital_channels', missing='error')
-    _trigger_source = ConfigOption(name='trigger_source',  missing='error')
+    _trigger_source = ConfigOption(name='trigger_source',  default = None, missing='nothing')
     _trigger_edge = ConfigOption(name='trigger_edge', default="RISING",
                                  constructor=lambda x: ni.constants.Edge[x.upper()], missing='nothing')
     _enable_dig_filter = ConfigOption(name='enable_dig_filter', default=True)
@@ -107,12 +103,6 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         Starts up the NI-card and performs sanity checks.
         """
 
-        if type(self._digital_channels) is str:
-            self._digital_channels = [self._digital_channels]
-        self._digital_channels = set([self._extract_terminal(chan) for chan in self._digital_channels])
-
-        #self._external_sample_clock_source = self._extract_terminal(self._external_sample_clock_source)
-
         # Check if device is connected and set device to use
         dev_names = ni.system.System().devices.device_names
         if self._device_name.lower() not in set(dev.lower() for dev in dev_names):    
@@ -130,7 +120,6 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
         # Get available sources
         self.__available_timebases = [terminal.split('/')[-1] for terminal in self._device_handle.terminals if 'HzTimebase' in terminal]
-        available_freqs = [tx.split('Timebase')[0] for tx in self.__available_timebases]
 
         self.__all_counters = tuple(
             ctr.split('/')[-1] for ctr in self._device_handle.co_physical_chans.channel_names if
@@ -139,19 +128,20 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             term.rsplit('/', 1)[-1].lower() for term in self._device_handle.terminals if 'PFI' in term)
 
         # Check all inputs
-        if type(self._sample_rate) != str:
-            raise NotImplemented(f'Timebase other than fixed-internal not yet available, choose from {available_freqs}')
-        self.clock_source = self._sample_rate  #Typechecking handled herein
-        self.trigger_source = self._trigger_source
-        self.downsample = self._downsample
-        self.sampling_time_ns = self._sampling_time_ns
-
+        if type(self._digital_channels) is str:
+            self._digital_channels = [self._digital_channels]
+        self._digital_channels = set([self._extract_terminal(chan) for chan in self._digital_channels])
+        
         dc_verified = []
         for channel in self._digital_channels:
-            if channel in self.__all_digital_terminals:
+            channelVerified=True
+            for chI in channel.split('-'):
+                if chI not in self.__all_digital_terminals:
+                    channelVerified=False
+                    self.log.error(f'Channel not found on NI device, omitting: {chI}')
+            if channelVerified:
                 dc_verified.append(channel)
-            else:
-                self.log.error(f'Channel not found on NI device, omitting: {channel}')
+                
         self._digital_channels = set(dc_verified)
 
         if len(self._digital_channels)==0:
@@ -159,9 +149,6 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 'No valid digital sources defined in config. Activation of '
                 'NIXSeriesInStreamer failed!'
             )
-
-
-
         if type(self._sample_rate) is not str:  #For implementing using an internal clock as a variable timebase.
             max_digital=3
         else:
@@ -170,9 +157,13 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             raise ValueError(
                 'Too many digital channels specified. Maximum number of digital channels is 3 (or 4 without internal clock).'
             )
-
         self._active_channels = list(self._digital_channels)  
 
+        #Typechecking handled herein
+        self.clock_source = self._sample_rate  
+        self.trigger_source = self._trigger_source
+        self.downsample = self._downsample
+        self.sampling_time_ns = self._sampling_time_ns
 
 
     def on_deactivate(self):
@@ -187,6 +178,9 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
     @clock_source.setter
     def clock_source(self,value):
+        available_freqs = [tx.split('Timebase')[0] for tx in self.__available_timebases]
+        if type(self._sample_rate) != str:
+            raise NotImplemented(f'Timebase other than fixed-internal not yet available, choose from {available_freqs}')
         if value+'Timebase' in self.__available_timebases:
             self._clock_source =  value+"Timebase"
         elif value in self.__available_timebases:
@@ -200,11 +194,17 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
     @trigger_source.setter
     def trigger_source(self, value):
-        value = self._extract_terminal(value)
-        if value not in self.__all_digital_terminals:
-            raise ValueError(f'Trigger source not found in digital channels. {value}')
-        else:
+        if value is None:
+            for chI in self.active_channels:
+                if len(chI).split('-')==1:
+                    raise ValueError(f'Trigger source required for active channel {chI}')
             self._trigger_source=value
+        else:
+            value = self._extract_terminal(value)
+            if value not in self.__all_digital_terminals:
+                raise ValueError(f'Trigger source not found in digital channels. {value}')
+            else:
+                self._trigger_source=value
 
     @property
     def sampling_time_ns(self):
@@ -242,7 +242,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         assert self.module_state() != 'locked', \
             'Unable to change active channels while finite sampling is running. New settings ignored.'
 
-        channels = tuple(self._extract_terminal(channel) for channel in channels)
+        channels = tuple(self._extract_terminal(chI) for chI in channels)
 
         assert set(channels).issubset(set(self._digital_channels)), \
             f'Trying to set invalid input channels "' \
@@ -518,6 +518,11 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
             task_name = f'{chan}_timing_task'
 
+            if len(chan.split('-'))>1:
+                trigger_source = chan.split('-')[1]
+                chan = chan.split('-')[0]
+            else:
+                trigger_source = self.trigger_source
             # Try to find available counter
             for ctr in self.__all_counters:
                 ctr_name = '/{0}/{1}'.format(self._device_name, ctr)
@@ -547,7 +552,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                         task.timing.samp_clk_dig_fltr_min_pulse_width = 20e-9
 
                     ci_chan.ci_count_edges_count_reset_enable = True
-                    ci_chan.ci_count_edges_count_reset_term = f"/{self._device_name}/{self.trigger_source}"
+                    ci_chan.ci_count_edges_count_reset_term = f"/{self._device_name}/{trigger_source}"
                     ci_chan.ci_count_edges_count_reset_active_edge = self._trigger_edge
                     ci_chan.ci_count_edges_count_reset_reset_cnt = 0
 
@@ -618,6 +623,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         @param str term_str: The str to extract the terminal name from
         @return str: The terminal name in lower case
         """
+        if len(term_str.split('-'))>1: #Allow joined channels for source-trigger inputs.
+            return '-'.join(NIXSeriesPulseTimingInput._extract_terminal(chI) for chI in term_str.split('-'))
         term = term_str.strip('/').lower()
         if 'dev' in term:
             term = term.split('/', 1)[-1]
