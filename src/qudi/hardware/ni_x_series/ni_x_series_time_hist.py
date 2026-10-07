@@ -23,7 +23,7 @@ If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import nidaqmx as ni
-from nidaqmx.stream_readers import  CounterReader
+from nidaqmx.stream_readers import  CounterReader, AnalogMultiChannelReader
 
 from qudi.util.mutex import RecursiveMutex
 from qudi.core.configoption import ConfigOption
@@ -49,8 +49,11 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             device_name : Dev1  #NI Name of DAQ device
             # Digital channels can be source or source-trigger ; if trigger provided, trigger_source below is ignored for that combination
             digital_channels :  # Digital channels available to acquire on
-                PFI8
-                PFI8-PFI3
+                - PFI8
+                - PFI8-PFI3
+            analog_channels :  # Analog channels available to acquire on
+                - AI0
+                - AI3
             trigger_source : PFI0  # Source of timing reset (t=0) trigger ; optional if provided as combo above
             trigger_edge : RISING  # Are digital/trigger sources rising/falling edge?
 
@@ -59,6 +62,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
     # config options
     _device_name = ConfigOption(name='device_name', default='Dev1', missing='warn')
     _digital_channels = ConfigOption(name='digital_channels', missing='error')
+    _analog_channels = ConfigOption(name='analog_channels', missing='nothing', default = [])
+    _analog_voltage_range = ConfigOption(name='analog_voltage_range', missing='nothing', default = 5)
     _trigger_source = ConfigOption(name='trigger_source',  default = None, missing='nothing')
     _trigger_edge = ConfigOption(name='trigger_edge', default="RISING",
                                  constructor=lambda x: ni.constants.Edge[x.upper()], missing='nothing')
@@ -71,9 +76,6 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
     _sampling_time_ns = 1000  #How long to measure for after trigger, needs to be <= trigger_period
     _buffer_size = 1_000_000 # Local buffer size for each channel readout, needs to be >> event_rate * sampling_time
 
-
-    # Hardcoded data type
-    __data_type = np.float64
     __min_tick_ns = 10   #Fastest sampling rate for device
 
     ## TODO Perhaps: Allow separate trigger sources for each channel (or for same channel), e.g. for seeing event timing for gated counting. 
@@ -84,18 +86,22 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         self._device_handle = None
         # Task handles for NIDAQmx tasks
         self._di_task_handles = list()
+        self._ai_task_handle = None
         self._clk_task_handle = None
         # nidaqmx stream reader instances to help with data acquisition
         self._di_readers = dict()
+        self._ai_reader = None
 
         # List of all available counters and terminals for this device
         self.__all_counters = tuple()
         self.__all_digital_terminals = tuple()
+        self.__all_analog_terminals = tuple()
 
         self._thread_lock = RecursiveMutex()
 
-        self._active_channels = list()
+        self._active_channels = set()
         self.data = {}
+        self._analog_MA_i = 0
 
 
     def on_activate(self):
@@ -126,6 +132,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             'ctr' in ctr.lower())
         self.__all_digital_terminals = tuple(
             term.rsplit('/', 1)[-1].lower() for term in self._device_handle.terminals if 'PFI' in term)
+        self.__all_analog_terminals = tuple(
+            term.rsplit('/', 1)[-1].lower() for term in self._device_handle.ai_physical_chans.channel_names)
 
         # Check all inputs
         if type(self._digital_channels) is str:
@@ -144,11 +152,11 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 
         self._digital_channels = set(dc_verified)
 
-        if len(self._digital_channels)==0:
-            raise ValueError(
-                'No valid digital sources defined in config. Activation of '
-                'NIXSeriesInStreamer failed!'
-            )
+        # if len(self._digital_channels)==0:  # Is having a digital channel strictly required?
+        #     raise ValueError(
+        #         'No valid digital sources defined in config. Activation of '
+        #         'NIXSeriesPulseTimingInput failed!'
+        #     )
         if type(self._sample_rate) is not str:  #For implementing using an internal clock as a variable timebase.
             max_digital=3
         else:
@@ -157,7 +165,27 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             raise ValueError(
                 'Too many digital channels specified. Maximum number of digital channels is 3 (or 4 without internal clock).'
             )
-        self._active_channels = list(self._digital_channels)  
+
+        if type(self._analog_channels) is str:
+            self._analog_channels = [self._di_analog_channelsgital_channels]
+        self._analog_channels = set([self._extract_terminal(chan) for chan in self._analog_channels])
+        
+        ac_verified = []
+        for channel in self._analog_channels:
+            channelVerified=True
+            for chI in channel.split('-'):
+                if chI not in self.__all_analog_terminals:
+                    channelVerified=False
+                    self.log.error(f'Channel not found on NI device, omitting: {chI}')
+            if channelVerified:
+                ac_verified.append(channel)
+                
+        self._analog_channels = set(ac_verified)
+        
+        self._active_channels = self._digital_channels | self._analog_channels
+
+        if len(self._active_channels)==0:
+            raise ValueError(' No valid digital or analog sources defined in config. Activation of NIXSeriesPulseTimingInput failed.')
 
         #Typechecking handled herein
         self.clock_source = self._sample_rate  
@@ -244,12 +272,12 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
         channels = tuple(self._extract_terminal(chI) for chI in channels)
 
-        assert set(channels).issubset(set(self._digital_channels)), \
+        assert set(channels).issubset(self._digital_channels|self._analog_channels), \
             f'Trying to set invalid input channels "' \
-            f'{set(channels).difference(set(self._constraints.channel_names))}" not defined in config.'
+            f'{set(channels).difference(self._digital_channels|self._analog_channels)}" not defined in config.'
 
         with self._thread_lock:
-            self._active_channels = list(channels)
+            self._active_channels = set(channels)
 
 
     def start_buffered_acquisition(self):
@@ -272,6 +300,11 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             self.module_state.unlock()
             raise NiInitError('Counter task initialization failed; all tasks terminated')
 
+        if self._init_analog_task() < 0:
+            self.terminate_all_tasks()
+            self.module_state.unlock()
+            raise NiInitError('Analog task initialization failed; all tasks terminated')
+
         if '100MHz' in self.clock_source: #TODO: interpret timebase programatically.
             tick_ns = 10
         elif '20MHz' in self.clock_source:
@@ -282,9 +315,10 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             raise NotImplementedError('Only 100MHz, 20MHz and 100kHz timebases have been implemented')
         # start tasks
         self._data_buffer = np.zeros(self._buffer_size,dtype=np.uint32)
+        self.data = {}
+        self._analog_MA_i = 0
         if len(self._di_task_handles) > 0:
             try:
-                self.data = {}
                 for chan, reader in self._di_readers.items():
                     reader._task.start()
                     bin_width_ns = tick_ns * self.downsample
@@ -297,6 +331,20 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 self.terminate_all_tasks()
                 self.module_state.unlock()
                 raise e
+
+        if self._ai_task_handle is not None:
+            try:
+                analog_channels= self.active_channels & self._analog_channels
+                for num, ai_channel in enumerate(analog_channels):
+                    self.data[ai_channel] = (
+                        np.arange(self._analog_samples+1) / self._analog_sample_rate * 1e9,  # edges, in ns
+                        np.zeros(self._analog_samples,dtype=float)  # values
+                    )
+                self._ai_task_handle.start()
+            except ni.DaqError:
+                self.terminate_all_tasks()
+                self.module_state.unlock()
+                raise
 
 
         # if not self._sample_on_external_clock:
@@ -320,7 +368,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
     def acquire_sample(self):
         with self._thread_lock:
-            if len(self._di_readers)==0:
+            if (len(self._di_readers)==0) and (self._ai_reader is None):
                 self.log.warning(f'acquire_sample called while no data_readers were initialized')
                 return None
             for chan,reader in self._di_readers.items():
@@ -339,14 +387,16 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                     buffer[n:] = 0
 
                     bc = np.bincount(buffer[:n]//self.downsample)
-                    bc = bc[:len(hist)]   # Hm, do I want sampling time? Or just use the triggers to automatically reset.
+                    bc = bc[:len(hist)] 
                     hist[:len(bc)] += bc
+
+            self._acquire_analog()
             return self.data
 
 
     def acquire_sample_diff(self):
         with self._thread_lock:
-            if len(self._di_readers)==0:
+            if (len(self._di_readers)==0) and (self._ai_reader is None):
                 self.log.warning(f'acquire_sample called while no data_readers were initialized')
                 return None
             for chan,reader in self._di_readers.items():
@@ -367,13 +417,38 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                     bc = np.bincount(np.diff(buffer[:n])//self.downsample)
                     bc = bc[:len(hist)]   # Hm, do I want sampling time? Or just use the triggers to automatically reset.
                     hist[:len(bc)] += bc
+            self._acquire_analog()
             return self.data
 
+    def _acquire_analog(self):
+        # Analog acquisition acquires once per poll due to nature of Analog readout being quite different than counter
+        if self._ai_reader is not None:
+            analog_channels = self.active_channels & self._analog_channels
+            data_buffer = np.zeros(self._analog_samples * len(analog_channels))
+            read_samples_N = self._ai_reader.read_many_sample(
+                data_buffer,
+                number_of_samples_per_channel=self._analog_samples,)
+                #timeout=self._rw_timeout)
+            # if read_samples_N != number_of_samples:
+            #     return data
+            self._ai_task_handle.stop()  #Re-arm trigger and readout
+            self._ai_task_handle.start()
+            self._analog_MA_i+=1
+            for num, ai_channel in enumerate(analog_channels):
+                hist = self.data[ai_channel][1] #Edit array in place
+                if self._analog_MA_i==1:
+                    hist += data_buffer[num * self._analog_samples:(num + 1) * self._analog_samples]
+                else: #Take moving average
+                    new_data = data_buffer[num * self._analog_samples:(num + 1) * self._analog_samples]
+                    hist *= (1-1/self._analog_MA_i)  
+                    hist += new_data*(1/self._analog_MA_i)
+                    
 
     def terminate_all_tasks(self):
         err = 0
 
         self._di_readers = dict()
+        self._ai_reader = None
 
         while len(self._di_task_handles) > 0:
             try:
@@ -387,6 +462,16 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             finally:
                 del self._di_task_handles[-1]
         self._di_task_handles = list()
+
+        if self._ai_task_handle is not None:
+            try:
+                if not self._ai_task_handle.is_task_done():
+                    self._ai_task_handle.stop()
+                self._ai_task_handle.close()
+            except ni.DaqError:
+                self.log.exception('Error while trying to terminate clock task.')
+                err = -1
+        self._ai_task_handle = None
 
         if self._clk_task_handle is not None:
             try:
@@ -504,7 +589,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         @return int: error code (0:OK, -1:error)
         """
 
-        if not self.active_channels:
+        digital_channels = self.active_channels & self._digital_channels
+        if not digital_channels:
             return 0
         if self._di_task_handles:
             self.log.error('_init_digital_tasks called while tasks still running, terminating all tasks'
@@ -512,9 +598,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             self.terminate_all_tasks()
             return -1
 
-
         # Set up digital counting tasks
-        for i, chan in enumerate(self.active_channels):
+        for i, chan in enumerate(digital_channels):
 
             task_name = f'{chan}_timing_task'
 
@@ -525,7 +610,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 trigger_source = self.trigger_source
             # Try to find available counter
             for ctr in self.__all_counters:
-                ctr_name = '/{0}/{1}'.format(self._device_name, ctr)
+                ctr_name = self._term_path(ctr)
                 try:
                     task = ni.Task(task_name)
                 except ni.DaqError:
@@ -538,11 +623,11 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                         ctr_name,
                         edge=ni.constants.Edge.RISING) #Counting on internal clock, assume rising edge.
 
-                    ci_chan.ci_count_edges_term = f"/{self._device_name}/{self.clock_source}"
+                    ci_chan.ci_count_edges_term = self._term_path(self.clock_source)
 
                     task.timing.cfg_samp_clk_timing(
-                        rate=1000000,
-                        source=f"/{self._device_name}/{chan}",
+                        rate=10_000_000,
+                        source=self._term_path(chan),
                         sample_mode=ni.constants.AcquisitionType.CONTINUOUS,
                         active_edge=self._trigger_edge
                     )
@@ -552,7 +637,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                         task.timing.samp_clk_dig_fltr_min_pulse_width = 20e-9
 
                     ci_chan.ci_count_edges_count_reset_enable = True
-                    ci_chan.ci_count_edges_count_reset_term = f"/{self._device_name}/{trigger_source}"
+                    ci_chan.ci_count_edges_count_reset_term = self._term_path(trigger_source)
                     ci_chan.ci_count_edges_count_reset_active_edge = self._trigger_edge
                     ci_chan.ci_count_edges_count_reset_reset_cnt = 0
 
@@ -609,8 +694,109 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
                 self._di_task_handles.append(task)
                 break
         return 0
-    
 
+    
+    def _init_analog_task(self):
+        """
+        Set up task for analog voltage measurement.
+
+        @return int: error code (0:OK, -1:error)
+        """
+        analog_channels = self.active_channels & self._analog_channels
+        if not analog_channels:
+            return 0
+        if self._ai_task_handle:
+            self.log.error(
+                'Analog input task has already been generated. Unable to set up analog in task.')
+            self.terminate_all_tasks()
+            return -1
+        # if self._clk_task_handle is None and (len(self._external_sample_clock_source)==0):
+        #     self.log.error(
+        #         'No sample clock task has been generated and no external clock source specified. '
+        #         'Unable to create analog voltage measurement tasks.')
+        #     self.terminate_all_tasks()
+        #     return -1
+
+
+        # Set up analog input task
+        task_name = 'AnalogIn_{0:d}'.format(id(self))
+        try:
+            ai_task = ni.Task(task_name)
+        except ni.DaqError:
+            self.log.exception('Unable to create analog-in task with name "{0}".'.format(task_name))
+            self.terminate_all_tasks()
+            return -1
+
+        try:
+            ai_ch_str = ','.join([self._term_path(c) for c in analog_channels])
+            ai_task.ai_channels.add_ai_voltage_chan(ai_ch_str,
+                                                    max_val=self._analog_voltage_range,
+                                                    min_val=-self._analog_voltage_range)
+            _analog_buffer_size = ai_task.in_stream.input_buf_size
+            if _analog_buffer_size == 0:
+                _analog_buffer_size = ai_task.in_stream.input_onbrd_buf_size  #Hardware max rather than 'as-configured' size
+
+            _analog_max_sample_rate = ai_task.timing.samp_clk_max_rate  #Max sample rate for Analog
+            if self.clock_source == '100kHzTimebase':
+                self._analog_sample_rate = min(_analog_max_sample_rate,100_000)
+            else:
+                self._analog_sample_rate = _analog_max_sample_rate
+            self._analog_samples = max(int(self.sampling_time_ns/1e9*self._analog_sample_rate),2)  #Minimum value is 2.
+            if self._analog_samples > _analog_buffer_size:
+                self.log.warning(f'Requested acquisition time greater than analog buffer, limiting to {_analog_buffer_size} samples')
+                self._analog_samples = _analog_buffer_size
+            if self._analog_samples==2:
+                self.log.warning(f'Only enough time to collect 2 analog sample at analog max {self._analog_sample_rate} Hz')
+            ai_task.timing.cfg_samp_clk_timing(rate=self._analog_sample_rate,
+                                                sample_mode=ni.constants.AcquisitionType.FINITE,
+                                                samps_per_chan=self._analog_samples)
+            ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(
+                                                trigger_source=self._term_path(self._trigger_source),
+                                                trigger_edge=self._trigger_edge)
+        except ni.DaqError:
+            self.log.exception(
+                'Something went wrong while configuring the analog-in task.')
+            try:
+                del ai_task
+            except NameError:
+                pass
+            self.terminate_all_tasks()
+            return -1
+
+        try:
+            ai_task.control(ni.constants.TaskMode.TASK_RESERVE)
+        except ni.DaqError:
+            try:
+                ai_task.close()
+            except ni.DaqError:
+                self.log.exception('Unable to close task.')
+            try:
+                del ai_task
+            except NameError:
+                self.log.exception('Some weird namespace voodoo happened here...')
+
+            self.log.exception('Unable to reserve resources for analog-in task.')
+            self.terminate_all_tasks()
+            return -1
+
+        try:
+            self._ai_reader = AnalogMultiChannelReader(ai_task.in_stream)
+            self._ai_reader.verify_array_shape = False
+        except ni.DaqError:
+            try:
+                ai_task.close()
+            except ni.DaqError:
+                self.log.exception('Unable to close task.')
+            try:
+                del ai_task
+            except NameError:
+                self.log.exception('Some weird namespace voodoo happened here...')
+            self.log.exception('Something went wrong while setting up the analog input reader.')
+            self.terminate_all_tasks()
+            return -1
+
+        self._ai_task_handle = ai_task
+        return 0
 
 
     @staticmethod
@@ -629,6 +815,9 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
         if 'dev' in term:
             term = term.split('/', 1)[-1]
         return term
+
+    def _term_path(self,terminal):
+        return '/{0}/{1}'.format(self._device_name, terminal)
 
 class NiInitError(Exception):
     pass

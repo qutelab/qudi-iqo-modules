@@ -26,7 +26,8 @@ from PySide6 import QtCore
 from qudi.core.module import GuiBase
 from qudi.core.connector import Connector
 from qudi.logic.time_hist_logic import TimeHistLogic
-from qudi.gui.time_histogram.time_histogram_main_window import TimeHistogramMainWindow
+import qudi.gui.time_histogram.time_histogram_main_window as time_histogram_main_window
+#from qudi.gui.time_histogram.time_histogram_main_window import TimeHistogramMainWindow
 
 
 class TimeHistogramGui(GuiBase):
@@ -62,8 +63,10 @@ class TimeHistogramGui(GuiBase):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def on_activate(self):
+        import importlib
+        importlib.reload(time_histogram_main_window)
         """Build and show the main window; connect all signals."""
-        self._mw = TimeHistogramMainWindow()
+        self._mw = time_histogram_main_window.TimeHistogramMainWindow()
 
         logic = self._time_hist_logic()
 

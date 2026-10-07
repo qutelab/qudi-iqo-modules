@@ -207,6 +207,17 @@ class TimeHistogramMainWindow(QtWidgets.QMainWindow):
         self.plot_widget.setLabel('left', 'Counts')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.5)
         self.plot_widget.addLegend()
+        self.plot_view2 = pg.ViewBox()  #Second y-axis for Analog readout
+        self.plot_widget.scene().addItem(self.plot_view2)
+        self.plot_widget.showAxis('right')
+        self.plot_widget.getAxis('right').linkToView(self.plot_view2)
+        self.plot_widget.getAxis('right').setLabel('Volts (V)')
+        self.plot_view2.setXLink(self.plot_widget)
+        self._update_plot_link_view()
+        vb = self.plot_widget.getPlotItem().getViewBox()
+        vb.sigResized.connect(self._update_plot_link_view)
+
+
         self.setCentralWidget(self.plot_widget)
 
         self._curves = {}
@@ -285,6 +296,11 @@ class TimeHistogramMainWindow(QtWidgets.QMainWindow):
 
         self.restore_default_view()
 
+    def _update_plot_link_view(self):
+        vb = self.plot_widget.getPlotItem().getViewBox()
+        self.plot_view2.setGeometry(vb.sceneBoundingRect())
+        self.plot_view2.linkedViewChanged(vb, vb.XAxis)
+
     def restore_default_view(self):
         """Reset dock widget to its default position."""
         self.control_dockwidget.setFloating(False)
@@ -297,14 +313,21 @@ class TimeHistogramMainWindow(QtWidgets.QMainWindow):
 
     def set_channels(self, channels):
         """ Create/replace one plot curve per active histogram channel. """
-        for curve in self._curves.values():
-            self.plot_widget.removeItem(curve)
+        for channel, curve in self._curves.items():
+            if 'ai' not in channel:
+                self.plot_widget.removeItem(curve)
+            else:
+                self.plot_view2.removeItem(curve)
         self._curves.clear()
         for i, channel in enumerate(channels):
             pen = pg.mkPen(self._CHANNEL_COLORS[i % len(self._CHANNEL_COLORS)], width=2)
-            self._curves[channel] = self.plot_widget.plot(
-                name=channel, pen=pen, stepMode='center'
-            )
+            if 'ai' not in channel:
+                self._curves[channel] = self.plot_widget.plot(
+                    name=channel, pen=pen, stepMode='center')
+            else:
+                self._curves[channel] = pg.PlotDataItem(
+                    name=channel, pen=pen, stepMode='center')
+                self.plot_view2.addItem(self._curves[channel])
 
     def update_data(self, data):
         """ Update the histogram curves from a ``{channel: (edges, counts)}`` mapping (edges in ns). """
@@ -314,4 +337,5 @@ class TimeHistogramMainWindow(QtWidgets.QMainWindow):
                 continue
             # stepMode='right' requires len(edges) == len(counts) + 1
             n = min(len(counts), max(0, len(edges) - 1))
-            curve.setData(edges[:n + 1] / _NS_PER_S, counts[:n])
+            if n>0:
+                curve.setData(edges[:n + 1] / _NS_PER_S, counts[:n])

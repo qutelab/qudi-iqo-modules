@@ -122,9 +122,9 @@ class TimeHistLogic(LogicBase):
 
     @property
     def available_channels(self):
-        """ Returns the list of digital channel names configured on the hardware module. """
+        """ Returns the list of channel names configured on the hardware module. """
         try:
-            return sorted(self._data_scanner()._digital_channels)
+            return sorted(self._data_scanner()._digital_channels|self._data_scanner()._analog_channels)
         except AttributeError:
             return []
 
