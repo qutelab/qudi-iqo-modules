@@ -101,6 +101,14 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         self._image_widget.getPlotItem().setContentsMargins(0, 1, 5, 2)
         self._image_item = DataImageItem()
         self._image_widget.addItem(self._image_item)
+        # Used instead of the (uniform-pixel) image item when the x points are not evenly spaced,
+        # e.g. for a log-scale scan, so that every column sits at its true x position.
+        lut = self._image_item.lut
+        self._mesh_item = pg.PColorMeshItem(
+            colorMap=pg.ColorMap(np.linspace(0, 1, len(lut)), lut)
+        )
+        self._mesh_item.setVisible(False)
+        self._image_widget.addItem(self._mesh_item)
         self._image_widget.setMinimumWidth(100)
         self._image_widget.setMinimumHeight(150)
         self._image_widget.setSizePolicy(
@@ -153,6 +161,7 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         # Internal cache for re-rendering on colorbar setting changes
         self._last_image_data = None
         self._last_x_extent = (0.0, 1.0)
+        self._last_x_edges = None
         # Track selected channels to detect when the selection changes
         self._prev_xi = -1
         self._prev_yi = -1
@@ -211,7 +220,7 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
 
     def set_data(self, signal_data, raw_data, x_extent=None,
                  x_label='X', x_unit='', x0_label='X', x0_unit='',
-                 y_label='Signal', y_unit=''):
+                 y_label='Signal', y_unit='', x_values=None):
         """
         Refresh both plots.
 
@@ -230,6 +239,10 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
             Axis label / unit for column 0 (always used as the 2-D image x-axis).
         y_label, y_unit : str
             Axis labels / units for the selected y-channel.
+        x_values : ndarray or None
+            The x positions (column 0) of the points in each scan line, e.g.
+            ``logic.x_data``.  If they are not evenly spaced the 2-D image places
+            each column at its true x position.  When *None* even spacing is assumed.
         """
         xi = self.x_channel_index
         yi = self.y_channel_index
@@ -276,7 +289,7 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
             self.average_plot.data = None
 
         # ── 2-D image ─────────────────────────────────────────────────────────
-        self._update_image(raw_data, x_extent)
+        self._update_image(raw_data, x_extent, x_values)
 
     def update_fit_curve(self,fit_results=None):
         if fit_results is not None:
@@ -298,7 +311,8 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
             self.average_plot.fit_plot.setData([],[])
 
 
-    def update_image_data(self, raw_data, x_extent=None, y_label='Signal', y_unit=''):
+    def update_image_data(self, raw_data, x_extent=None, y_label='Signal', y_unit='',
+                          x_values=None):
         """
         Update only the 2-D image — suitable for per-data-point refreshes
         without recomputing the (more expensive) averaged signal plot.
@@ -311,21 +325,48 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
             Fixed x-axis range.  Preferred over inferred range during scanning.
         y_label, y_unit : str
             Label / unit for the colour bar.
+        x_values : ndarray or None
+            See ``set_data``.
         """
         self._colorbar.set_label(text=y_label, unit=y_unit)
-        self._update_image(raw_data, x_extent)
+        self._update_image(raw_data, x_extent, x_values)
 
     def clear_data(self):
         """Clear both plots."""
         self.average_plot.data = None
         self.update_fit_curve(None)
         self._image_item.clear()
+        self._mesh_item.setVisible(False)
         self._last_image_data = None
         self._last_x_extent = (0.0, 1.0)
+        self._last_x_edges = None
 
     # ── Internal rendering ────────────────────────────────────────────────────
 
-    def _update_image(self, raw_data, x_extent=None):
+    @staticmethod
+    def _nonuniform_x_edges(x_values, n_points):
+        """
+        Return the ``n_points + 1`` column edges for unevenly spaced, strictly
+        increasing x positions, or None if the x positions are not usable or are
+        evenly spaced (in which case a plain image is exact and faster).
+
+        Each edge sits halfway between neighbouring points; the outer edges extend
+        by the same half-spacing, matching ``DataImageItem.set_image_extent``.
+        """
+        if x_values is None:
+            return None
+        x = np.asarray(x_values, dtype=float)
+        if x.ndim != 1 or x.size != n_points or n_points < 3 or not np.all(np.isfinite(x)):
+            return None
+        steps = np.diff(x)
+        if not np.all(steps > 0):
+            return None
+        if np.allclose(steps, steps.mean(), rtol=1e-6, atol=0):
+            return None
+        mid = (x[:-1] + x[1:]) / 2
+        return np.concatenate(([2 * x[0] - mid[0]], mid, [2 * x[-1] - mid[-1]]))
+
+    def _update_image(self, raw_data, x_extent=None, x_values=None):
         """
         Shared image update logic used by both ``set_data`` and
         ``update_image_data``.
@@ -374,13 +415,16 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
 
             self._last_image_data = img
             self._last_x_extent = (x_min, x_max)
-            self._render_image(img, x_min, x_max)
+            self._last_x_edges = self._nonuniform_x_edges(x_values, img.shape[0])
+            self._render_image(img, x_min, x_max, self._last_x_edges)
         else:
             self._last_image_data = None
             self._last_x_extent = (0.0, 1.0)
+            self._last_x_edges = None
             self._image_item.clear()
+            self._mesh_item.setVisible(False)
 
-    def _render_image(self, img, x_min, x_max):
+    def _render_image(self, img, x_min, x_max, x_edges=None):
         if self._colorbar.mode is ColorBarWidget.ColorBarMode.PERCENTILE:
             self._image_item.set_image(image=img, autoLevels=False)
             levels = self._image_item.levels
@@ -393,11 +437,23 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
                 levels=self._colorbar.limits,
             )
         if img is not None and img.shape[0] > 0 and img.shape[1] > 0:
-            # After transpose: axis-0 = x (n_points), axis-1 = y (n_scans)
-            # extent (1, n_scans) places pixel centres at integers 1..n_scans
-            self._image_item.set_image_extent(
-                ((x_min, x_max), (1, img.shape[1]))
-            )
+            use_mesh = x_edges is not None
+            self._image_item.setVisible(not use_mesh)
+            self._mesh_item.setVisible(use_mesh)
+            if use_mesh:
+                # Scan lines sit at integers 1..n_scans, so their edges are at half-integers.
+                y_edges = np.arange(img.shape[1] + 1) + 0.5
+                x_grid, y_grid = np.meshgrid(x_edges, y_edges, indexing='ij')
+                levels = self._image_item.levels
+                if levels is not None:
+                    self._mesh_item.setLevels(tuple(levels), update=False)
+                self._mesh_item.setData(x_grid, y_grid, img, autoLevels=False)
+            else:
+                # After transpose: axis-0 = x (n_points), axis-1 = y (n_scans)
+                # extent (1, n_scans) places pixel centres at integers 1..n_scans
+                self._image_item.set_image_extent(
+                    ((x_min, x_max), (1, img.shape[1]))
+                )
             # Explicitly update the ViewBox x-range so both linked plots show
             # the correct span (setRect positions the image but does not move
             # the viewport automatically).
@@ -412,7 +468,7 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         else:
             self._image_item.set_percentiles(None)
         if self._last_image_data is not None:
-            self._render_image(self._last_image_data, *self._last_x_extent)
+            self._render_image(self._last_image_data, *self._last_x_extent, self._last_x_edges)
 
     @QtCore.Slot(tuple)
     def _colorbar_limits_changed(self, limits):
@@ -424,10 +480,11 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
                 autoLevels=False,
                 levels=(lower, upper),
             )
+            self._mesh_item.setLevels((lower, upper))
 
     @QtCore.Slot(tuple)
     def _colorbar_percentiles_changed(self, percentiles):
         if (self._colorbar.mode is ColorBarWidget.ColorBarMode.PERCENTILE
                 and self._last_image_data is not None):
             self._image_item.set_percentiles(percentiles)
-            self._render_image(self._last_image_data, *self._last_x_extent)
+            self._render_image(self._last_image_data, *self._last_x_extent, self._last_x_edges)

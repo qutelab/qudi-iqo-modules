@@ -96,6 +96,11 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self._x_range_form_label = QtWidgets.QLabel('X Range:')
         form.addRow(self._x_range_form_label, x_range_widget)
 
+        # ── X-Scale ───────────────────────────────────────────────────────────
+        self.x_scale_dropdown = QtWidgets.QComboBox()
+        self.x_scale_dropdown.addItems(['Linear','Log'])
+        form.addRow('X scale', self.x_scale_dropdown)
+
         # ── Time per point ────────────────────────────────────────────────────
         self.time_per_spinbox = ScienDSpinBox()
         self.time_per_spinbox.setDecimals(4)
@@ -133,6 +138,7 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.x_start_spinbox.editingFinished.connect(self._emit_x_range)
         self.x_end_spinbox.editingFinished.connect(self._emit_x_range)
         self.x_steps_spinbox.editingFinished.connect(self._emit_x_range)
+        self.x_scale_dropdown.currentTextChanged.connect(lambda x: self.sigParameterChanged.emit('x_scale', x))
         self.time_per_spinbox.editingFinished.connect(
             lambda: self.sigParameterChanged.emit('time_per', self.time_per_spinbox.value())
         )
@@ -307,6 +313,11 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
             self.x_start_spinbox.blockSignals(False)
             self.x_end_spinbox.blockSignals(False)
             self.x_steps_spinbox.blockSignals(False)
+
+        if 'x_scale' in params:
+            self.x_scale_dropdown.blockSignals(True)
+            self.x_scale_dropdown.setCurrentText(params['x_scale'])
+            self.x_scale_dropdown.blockSignals(False)
 
         if 'time_per' in params:
             self.time_per_spinbox.blockSignals(True)

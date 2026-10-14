@@ -345,6 +345,7 @@ class SimpleScanGui(GuiBase):
             x_label=x_label, x_unit=x_unit,
             x0_label=x0_label, x0_unit=x0_unit,
             y_label=y_label, y_unit=y_unit,
+            x_values=getattr(logic, 'x_data', None),
         )
 
     @QtCore.Slot()
@@ -385,6 +386,7 @@ class SimpleScanGui(GuiBase):
             x_extent=self._get_x_extent(),
             y_label=y_label,
             y_unit=y_unit,
+            x_values=getattr(logic, 'x_data', None),
         )
 
     @QtCore.Slot(bool)

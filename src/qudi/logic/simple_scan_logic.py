@@ -74,6 +74,7 @@ class SimpleScanLogic(LogicBase):
     # declare status variables
     _device_select = StatusVar(default='Laser')
     _x_range = StatusVar(default={})  #start, end, n-steps
+    _x_scale = StatusVar(default={})  #linear or log
     _time_per = StatusVar(default=1)
     _time_wait = StatusVar(default=0.1) #Time to wait at each step before counting
     _number_scans = StatusVar(default=1)
@@ -583,8 +584,23 @@ class SimpleScanLogic(LogicBase):
     
     @x_range.setter
     def x_range(self,value):
+        assert len(value)==3, 'x_range must have length 3 (min,max,n_steps)'
+        value = tuple(value)
         self._x_range[self._device_select] = value
         self.sigScanParametersUpdated.emit({'x_range' : value})
+
+    @property
+    def x_scale(self):
+        if self._device_select not in self._x_scale:
+            return 'linear'
+        return self._x_scale[self._device_select]
+
+    @x_scale.setter
+    def x_scale(self,value):
+        value = value.lower()
+        assert value in ['linear','log'], 'x_scale must be linear or log'
+        self._x_scale[self._device_select] = value
+        self.sigScanParametersUpdated.emit({'x_scale' : value})
 
     @property
     def number_scans(self):
@@ -637,7 +653,7 @@ class SimpleScanLogic(LogicBase):
         if f'{self.scan_device}/' in label:
             self.set_static_set_parameter_value(self.scan_device,label,value)
         else:
-            if label in ['x_range','number_scans','time_per','time_wait','scan_order']:
+            if label in ['x_range','number_scans','time_per','time_wait','scan_order','x_scale']:
                 setattr(self,label,value)
             else:
                 raise ValueError('Unexpected label request to be set:',label)
@@ -670,7 +686,12 @@ class SimpleScanLogic(LogicBase):
                     scanner.set_sample_rate(1/self._time_per)
                     scanner.set_frame_size(1)
 
-                self._x_data = np.linspace(*self.x_range)
+                if self.x_scale=='linear':
+                    self._x_data = np.linspace(*self.x_range)
+                elif self.x_scale=='log':
+                    self._x_data = np.logspace(np.log10(self.x_range[0]),np.log10(self.x_range[1]),self.x_range[2])
+                else:
+                    raise RuntimeError(f'Unexpected value for self.x_scale: {self.x_scale}')
 
                 device.start_scan(self._x_data[0])  # This will set any static parameters, set the device to the first x value, and start the device.
 
