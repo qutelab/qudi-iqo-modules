@@ -769,7 +769,8 @@ class NIXSeriesInStreamer(DataInStreamInterface):
                 ai_ch_str = ','.join([f'/{self._device_name}/{ch}' for ch in analog_channels])
                 ai_task.ai_channels.add_ai_voltage_chan(ai_ch_str,
                                                         max_val=max(self._adc_voltage_range),
-                                                        min_val=min(self._adc_voltage_range))
+                                                        min_val=min(self._adc_voltage_range),
+                                                        terminal_config = ni.constants.TerminalConfiguration.RSE)
                 ai_task.timing.cfg_samp_clk_timing(
                     sample_freq,
                     source=clock_channel,

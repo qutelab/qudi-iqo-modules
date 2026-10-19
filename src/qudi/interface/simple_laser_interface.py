@@ -27,7 +27,9 @@ from qudi.core.module import Base
 class ControlMode(IntEnum):
     POWER = 0
     CURRENT = 1
-    UNKNOWN = 2
+    POWER_MODULATION = 2
+    CURRENT_MODULATION = 3
+    UNKNOWN = 4
 
 
 class ShutterState(IntEnum):

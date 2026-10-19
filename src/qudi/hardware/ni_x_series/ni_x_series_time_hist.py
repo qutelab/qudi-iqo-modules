@@ -731,7 +731,8 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
             ai_ch_str = ','.join([self._term_path(c) for c in analog_channels])
             ai_task.ai_channels.add_ai_voltage_chan(ai_ch_str,
                                                     max_val=self._analog_voltage_range,
-                                                    min_val=-self._analog_voltage_range)
+                                                    min_val=-self._analog_voltage_range,
+                                                    terminal_config = ni.constants.TerminalConfiguration.RSE)
             _analog_buffer_size = ai_task.in_stream.input_buf_size
             if _analog_buffer_size == 0:
                 _analog_buffer_size = ai_task.in_stream.input_onbrd_buf_size  #Hardware max rather than 'as-configured' size

@@ -124,6 +124,11 @@ class SimpleScanLogic(LogicBase):
          'model'            : 'DoubleGaussian',
          'estimator'        : 'Dips',
          'custom_parameters': None},
+         
+        {'name'             : 'Three Gaussian Dips',
+         'model'            : 'TripleGaussian',
+         'estimator'        : 'Dips',
+         'custom_parameters': None},
 
         {'name'             : 'Gaussian',
          'model'            : 'Gaussian',
@@ -366,14 +371,17 @@ class SimpleScanLogic(LogicBase):
         #                      read static_read_parameters, scan, then call end_function. 
         # Any interruption will also call end_function.
         
+        def enable_daq_internal_clock(self): #Ensure enable clock enabled for non-gated/pulsed measurements.
+            self._data_scanner().set_external_clock(False,False,False)
+        
         self.laserScanner = self.ScanDevice('Laser',
-                lambda x: self._laser().set_piezo_voltage(x),
-                lambda : self._laser().get_wavelength(),
-                data_labels=['Piezo Voltage','Wavelength'], # x, y1, y2,...
-                data_units=['V','m'],
+                lambda x: self._laser().set_power(x),
+                #lambda : self._laser().get_power(),
+                data_labels=['Set Power'], # x, y1, y2,...
+                data_units=['W'],
                 static_read_parameters={},
-                static_set_parameters={'Laser Power': (self._laser().set_power, 1e-6, 'W')},
-                start_function=None,
+                static_set_parameters={}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
+                start_function=lambda : (enable_daq_internal_clock(self)),
                 end_function=None,
                 dependencies=['_laser'],
                 parent = self
@@ -387,7 +395,7 @@ class SimpleScanLogic(LogicBase):
                 data_units=['Hz'],
                 static_read_parameters={},
                 static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm')},
-                start_function=lambda : (self._microwave().set_cw(), self._microwave().cw_on()),
+                start_function=lambda : (enable_daq_internal_clock(self), self._microwave().set_cw(), self._microwave().cw_on()),
                 end_function=lambda : self._microwave().cw_off(),
                 dependencies=['_microwave'],
                 parent = self
@@ -420,7 +428,7 @@ class SimpleScanLogic(LogicBase):
 
         def _pulsed_start_scan(self):
             self._pulsed_initialGate = self._data_scanner()._gate_on_external_clock
-            self._data_scanner()._gate_on_external_clock = True
+            self._data_scanner().set_external_clock(gate=True)
             if self._microwave().cw_frequency < 400e6:
                 self._microwave().set_pulsed(frequency=1e8)
             else:
@@ -679,7 +687,7 @@ class SimpleScanLogic(LogicBase):
                 scanner = self._data_scanner()
                 device = self.device_dict[self._device_select]
 
-                if self._time_per >1:  #DAQ has min rate of 1 Hz, so collect multiple and average.
+                if self._time_per >0.01:  #DAQ has min rate of 1 Hz, so collect multiple and average.
                     scanner.set_sample_rate(100/self._time_per)
                     scanner.set_frame_size(100)
                 else:

@@ -225,17 +225,18 @@ class FunctionCatalog(QtCore.QObject):
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
-        "shuffle_x": {"type":bool, "default": lambda ctx: ctx.simple_scan_logic()._shuffle_x},
+        "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
+                        "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
         "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().odmrScanner._static_set_parameters['RF Power'][1]},
     })
-    def record_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x, RF_power):
+    def record_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power):
         # Implementation of simple scan specifically using ODMR to control its specific parameters.
         self.simple_scan_logic().scan_device = 'ODMR'
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
         self.simple_scan_logic().number_scans = number_scans
-        self.simple_scan_logic().shuffle_x = shuffle_x
+        self.simple_scan_logic().scan_order = scan_order
         self.simple_scan_logic().set_static_set_parameter_value('ODMR','RF Power', RF_power)
         
         self.simple_scan_logic().start_scan()
@@ -249,17 +250,18 @@ class FunctionCatalog(QtCore.QObject):
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
-        "shuffle_x": {"type":bool, "default": lambda ctx: ctx.simple_scan_logic()._shuffle_x},
+        "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
+                        "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
         "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedOdmrScanner._static_set_parameters['RF Power'][1]},
     })
-    def record_Pulsed_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x, RF_power):
+    def record_Pulsed_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power):
         # Implementation of simple scan specifically using Pulsed ODMR to control its specific parameters.
         self.simple_scan_logic().scan_device = 'Pulsed ODMR'
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
         self.simple_scan_logic().number_scans = number_scans
-        self.simple_scan_logic().shuffle_x = shuffle_x
+        self.simple_scan_logic().scan_order = scan_order
         self.simple_scan_logic().set_static_set_parameter_value('Pulsed ODMR','RF Power', RF_power)
         
         self.simple_scan_logic().start_scan()
@@ -276,16 +278,17 @@ class FunctionCatalog(QtCore.QObject):
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
-        "shuffle_x": {"type":bool, "default": lambda ctx: ctx.simple_scan_logic()._shuffle_x},
+        "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
+                        "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
     })
-    def record_scan(self, scan_device, x_start, x_end, number_steps, time_per, time_wait, number_scans, shuffle_x):
+    def record_scan(self, scan_device, x_start, x_end, number_steps, time_per, time_wait, number_scans, scan_order):
         # Implementation for recording generic scan. Logic will contain list of addressable devices.
         self.simple_scan_logic().scan_device = scan_device
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
         self.simple_scan_logic().number_scans = number_scans
-        self.simple_scan_logic().shuffle_x = shuffle_x
+        self.simple_scan_logic().scan_order = scan_order
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection)
@@ -400,6 +403,7 @@ class ParamDialog(QDialog):
                 else:
                     widget = QDoubleSpinBox()
                     widget.setRange(-1e12,1e12)  #Arbitrarily large hopefully
+                    widget.setDecimals(6)
                 widget.setValue(val)
             widget.setMinimumWidth(200)
 

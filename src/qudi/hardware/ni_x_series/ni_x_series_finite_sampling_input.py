@@ -71,8 +71,9 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             external_sample_clock_source:   # optional, clock OR source : clock(s)
                'PFI8': ['PFI0','PFI1']
             external_sample_clock_source_analog: PFI1  #Optional. Only one source can be used for all analog inputs, sample rate must be below 250,000 / N_channels
-            # gate_on_external_clock: True    # optional, gate the input signal on the external clock for specified inputs above.
-            # sample_on_external_clock: True  # optional, sample on the external clock, so every external clock pulse is recorded.
+            # gate_on_external_clock: True    # optional bool, gate the input signal on the external clock for specified inputs above.
+            # sample_on_external_clock: True  # optional bool, sample on the external clock, so every external clock pulse is recorded.
+            # sample_on_external_clock_analog: True  # optional bool, sample on the external clock for analog input, so every external clock pulse is recorded.
             # external_sample_clock_frequency: 1 # optional, for calculating rate if sampling externally. (If not provided, counts will be per cycle, not per second)
 
 
@@ -88,6 +89,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             name='external_sample_clock_source_analog', default=None, missing='nothing')
     _gate_on_external_clock = ConfigOption(name='gate_on_external_clock', default=False, missing='nothing')
     _sample_on_external_clock = ConfigOption(name='sample_on_external_clock', default=False, missing='nothing')
+    _sample_on_external_clock_analog = ConfigOption(name='sample_on_external_clock', default=False, missing='nothing')
     _external_sample_clock_frequency = ConfigOption(
         name='external_sample_clock_frequency', default=1, missing='nothing')
 
@@ -242,10 +244,14 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
 
         # Check if we need an internal clock, can also be set by software.
         if (len(self._external_sample_clock_source)==0):
-            self.set_external_clock(False,False)
+            self.set_external_clock(sample=False,gate=False)
         else:
             #Self-check inputs
             self.set_external_clock(sample=self._sample_on_external_clock, gate=self._gate_on_external_clock)
+        if self._external_sample_clock_source_analog is None:
+            self.set_external_clock(analog=False)
+        else:
+            self.set_external_clock(analog=self._sample_on_external_clock_analog)
 
         if self._sample_on_external_clock and (self._sample_rate==-1):
             if self._external_sample_clock_frequency is not None:
@@ -426,16 +432,21 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self._frame_size = samples
             self.log.debug(f'set frame_size to {self._frame_size}')
 
-    def set_external_clock(self,sample=False,gate=False):
+    def set_external_clock(self,sample=None,gate=None,analog=None):
         if gate or sample:
-            if (len(self._external_sample_clock_source)==0):
+            if (len(self._external_sample_clock_source)==0) and (len(self.__active_channels['di_channels'])>0):
                 self.log.error('Attempted to enable external clock, but no external_sample_clock_source set in config')
                 return 1
+        if analog:
+            if (self._external_sample_clock_source_analog is None)  and (len(self.__active_channels['ai_channels'])>0):
+                self.log.error('Attempted to enable external clock analog, but no external_sample_clock_source_anlog set in config')
 
-        self._sample_on_external_clock = sample
-        self._gate_on_external_clock = gate
-
-
+        if sample is not None:
+            self._sample_on_external_clock = sample
+        if gate is not None:
+            self._gate_on_external_clock = gate
+        if analog is not None:
+            self._sample_on_external_clock_analog = analog
 
 
     def start_buffered_acquisition(self):
@@ -612,9 +623,8 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 if (self._external_sample_clock_source_analog is not None) and (number_of_samples_A==1):
                     #Retrieve full buffer and average to 1 sample for external sourcing.
                     averageQ = True
-                    number_of_samples=samples_in_buffer_analog
+                    number_of_samples_A=samples_in_buffer_analog
                 else: averageQ=False
-
                 data_buffer = np.zeros(number_of_samples_A * len(self.__active_channels['ai_channels']))
                 read_samples = self._ai_reader.read_many_sample(
                     data_buffer,
@@ -624,7 +634,10 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                 #     return data
                 for num, ai_channel in enumerate(self.__active_channels['ai_channels']):
                     if averageQ:
-                        data[ai_channel] = np.array([np.mean(data_buffer[num * number_of_samples_A:(num + 1) * number_of_samples_A])])
+                        if self._sample_on_external_clock_analog:
+                            data[ai_channel] = np.mean(data_buffer[num * number_of_samples_A:(num + 1) * number_of_samples_A]) #np.array([
+                        else:  #Internal clock min sample of 2, but we only want 1.
+                            data[ai_channel] = data_buffer[num * number_of_samples_A:(num + 1) * number_of_samples_A][-1]
                     else:
                         data[ai_channel] = data_buffer[num * number_of_samples_A:(num + 1) * number_of_samples_A]
 
@@ -698,7 +711,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
                            'before you close the previous one.')
             return -1
 
-        if (not self._sample_on_external_clock) or (len(self._external_sample_clock_source)==0):
+        if (not self._sample_on_external_clock) or (not self._sample_on_external_clock_analog) or (len(self._external_sample_clock_source)==0):
             # Try to find an available counter
             for src in self.__all_counters:
                 # Check if task by that name already exists
@@ -926,7 +939,7 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             self.terminate_all_tasks()
             return -1
 
-        if self._clk_task_handle is None and (self._external_sample_clock_source_analog is None):
+        if self._clk_task_handle is None and (not self._sample_on_external_clock_analog):
             self.log.error(
                 'No sample clock task has been generated and no external clock source specified. '
                 'Unable to create analog voltage measurement tasks.')
@@ -946,15 +959,17 @@ class NIXSeriesFiniteSamplingInput(FiniteSamplingInputInterface):
             ai_ch_str = ','.join(['/{0}/{1}'.format(self._device_name, c) for c in analog_channels])
             ai_task.ai_channels.add_ai_voltage_chan(ai_ch_str,
                                                     max_val=max(self._adc_voltage_range),
-                                                    min_val=min(self._adc_voltage_range))
-            if self._external_sample_clock_source_analog is None:
-                ai_task.timing.cfg_samp_clk_timing(int(250_000/len(analog_channels)),  #Just for configuring internal buffer
+                                                    min_val=min(self._adc_voltage_range),
+                                                    terminal_config = ni.constants.TerminalConfiguration.RSE)
+            _analog_max_sample_rate = ai_task.timing.samp_clk_max_rate  #Max sample rate for Analog
+            if not self._sample_on_external_clock_analog:
+                ai_task.timing.cfg_samp_clk_timing(int(_analog_max_sample_rate/len(analog_channels)),  #Just for configuring internal buffer
                                                 source=self._clock_channel_term,
                                                 active_edge=self.trigger_edge_analog,
                                                 sample_mode=ni.constants.AcquisitionType.FINITE,
-                                                samps_per_chan=self._frame_size)
+                                                samps_per_chan=max(self._frame_size,2))
             else:
-                ai_task.timing.cfg_samp_clk_timing(int(250_000/len(analog_channels)),  #Just for configuring internal buffer
+                ai_task.timing.cfg_samp_clk_timing(int(_analog_max_sample_rate/len(analog_channels)),  #Just for configuring internal buffer
                                                 source=self._external_sample_clock_source_analog,
                                                 active_edge=self.trigger_edge_analog,
                                                 sample_mode=ni.constants.AcquisitionType.CONTINUOUS,
