@@ -33,7 +33,7 @@ from qudi.logic.laser_logic import LaserLogic
 
 from .laser_control_dockwidget import LaserControlDockWidget
 from .laser_plot_dockwidgets import LaserOutputDockWidget, LaserTemperatureDockWidget
-
+import importlib
 
 class LaserMainWindow(QtWidgets.QMainWindow):
     """ The main window for the LaserGui """
@@ -275,11 +275,24 @@ class LaserGui(GuiBase):
         )
         logic.sigDataChanged.connect(self._data_updated, QtCore.Qt.ConnectionType.QueuedConnection)
 
+        #Connection buttons
+        self.control_dock_widget.connect_button.clicked.connect(
+            lambda: (logic._laser().connect(), logic.start_query_loop()) if not logic._laser().connected else None
+        )
+        self.control_dock_widget.disconnect_button.clicked.connect(
+            lambda: (logic._laser().disconnect(), logic.stop_query_loop()) if logic._laser().connected else None
+        )
+
         self.show()
 
     def on_deactivate(self):
         """ Deactivate the module properly.
         """
+        logic = self._laser_logic()
+        try:
+            logic.stop_query_loop()
+        except:
+            pass
         self._mw.close()
         self.output_graph_dock_widget.visibilityChanged.disconnect()
         self._mw.action_view_output_graph.triggered[bool].disconnect()
@@ -287,7 +300,6 @@ class LaserGui(GuiBase):
         self._mw.action_view_temperature_graph.triggered[bool].disconnect()
 
         # disconnect all signals
-        logic = self._laser_logic()
         logic.sigPowerSetpointChanged.disconnect(self._power_setpoint_updated)
         logic.sigCurrentSetpointChanged.disconnect(self._current_setpoint_updated)
         logic.sigControlModeChanged.disconnect(self._control_mode_updated)
@@ -365,9 +377,11 @@ class LaserGui(GuiBase):
         @param ControlMode mode: Selected ControlMode enum
         """
         self.control_dock_widget.control_current_radio_button.setEnabled(False)
+        self.control_dock_widget.control_currentMod_radio_button.setEnabled(False)
         self.control_dock_widget.current_setpoint_spinbox.setEnabled(False)
         self.control_dock_widget.current_slider.setEnabled(False)
         self.control_dock_widget.control_power_radio_button.setEnabled(False)
+        self.control_dock_widget.control_powerMod_radio_button.setEnabled(False)
         self.control_dock_widget.power_setpoint_spinbox.setEnabled(False)
         self.control_dock_widget.power_slider.setEnabled(False)
         self.sigControlModeChanged.emit(mode)
@@ -430,29 +444,34 @@ class LaserGui(GuiBase):
 
     @QtCore.Slot(object)
     def _control_mode_updated(self, mode):
-        if mode == ControlMode.POWER:
+        if mode in [ControlMode.POWER,ControlMode.POWER_MODULATION]:
             self.control_dock_widget.current_slider.setEnabled(False)
             self.control_dock_widget.current_setpoint_spinbox.setEnabled(False)
             self.control_dock_widget.power_slider.setEnabled(True)
             self.control_dock_widget.power_setpoint_spinbox.setEnabled(True)
-            self.control_dock_widget.control_power_radio_button.setChecked(True)
-            self.control_dock_widget.control_power_radio_button.setEnabled(True)
-            self.control_dock_widget.control_current_radio_button.setEnabled(True)
-        elif mode == ControlMode.CURRENT:
+            if mode == ControlMode.POWER:
+                self.control_dock_widget.control_power_radio_button.setChecked(True)
+            else:
+                self.control_dock_widget.control_powerMod_radio_button.setChecked(True)
+        elif mode in [ControlMode.CURRENT, ControlMode.CURRENT_MODULATION]:
             self.control_dock_widget.power_slider.setEnabled(False)
             self.control_dock_widget.power_setpoint_spinbox.setEnabled(False)
             self.control_dock_widget.current_slider.setEnabled(True)
             self.control_dock_widget.current_setpoint_spinbox.setEnabled(True)
-            self.control_dock_widget.control_current_radio_button.setChecked(True)
-            self.control_dock_widget.control_power_radio_button.setEnabled(True)
-            self.control_dock_widget.control_current_radio_button.setEnabled(True)
+            if mode == ControlMode.CURRENT:
+                self.control_dock_widget.control_current_radio_button.setChecked(True)
+            else:
+                self.control_dock_widget.control_currentMod_radio_button.setChecked(True)
         else:
             self.control_dock_widget.current_slider.setEnabled(False)
             self.control_dock_widget.current_setpoint_spinbox.setEnabled(False)
             self.control_dock_widget.power_slider.setEnabled(False)
             self.control_dock_widget.power_setpoint_spinbox.setEnabled(False)
-            self.control_dock_widget.control_power_radio_button.setEnabled(False)
-            self.control_dock_widget.control_current_radio_button.setEnabled(False)
+
+        self.control_dock_widget.control_power_radio_button.setEnabled(True)
+        self.control_dock_widget.control_current_radio_button.setEnabled(True)
+        self.control_dock_widget.control_powerMod_radio_button.setEnabled(True)
+        self.control_dock_widget.control_currentMod_radio_button.setEnabled(True)
 
     @QtCore.Slot(object)
     def _laser_state_updated(self, state):

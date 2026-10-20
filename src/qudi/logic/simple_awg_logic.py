@@ -333,7 +333,6 @@ class SimpleAWGLogic(LogicBase):
         #print("Pulse Time: ", pulse_time)
         pulse_blocks = copy.deepcopy(self.pulse_blocks)
         sequence = copy.deepcopy(self.sequence)
-        
         if self._awg.connected:
             for step in sequence:
                 current_block = step['block']
@@ -380,15 +379,13 @@ class SimpleAWGLogic(LogicBase):
             else:
                 current_params = current_block
             if current_params[0] == "Variable Pulses":
-                if current_params[1] != "":
-                    avail_params.append(current_params[1])
-                else:
-                    current_params[1] = 0
-                    
-                if current_params[2] != "":
-                    avail_params.append(current_params[2])
-                else:
-                    current_params[2] = 0
+                # Only string placeholders are variables; numeric fields (e.g. 0) must not be selectable
+                for i in (1, 2):
+                    if isinstance(current_params[i], str):
+                        if current_params[i] != "":
+                            avail_params.append(current_params[i])
+                        else:
+                            current_params[i] = 0
 
         return avail_params
         

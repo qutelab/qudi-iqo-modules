@@ -202,65 +202,68 @@ class LaserLogic(LogicBase):
                 return
 
             laser = self._laser()
-            # Check if settings have changed by e.g. a device front panel
-            try:
-                laser_state = netobtain(laser.get_laser_state())
-                if laser_state != self._last_laser_state:
-                    self._last_laser_state = laser_state
-                    self.sigLaserStateChanged.emit(self._last_laser_state)
-            except:
-                pass
-            try:
-                shutter_state = netobtain(laser.get_shutter_state())
-                if shutter_state != self._last_shutter_state:
-                    self._last_shutter_state = shutter_state
-                    self.sigShutterStateChanged.emit(self._last_shutter_state)
-            except:
-                pass
-            try:
-                power_setpoint = laser.get_power_setpoint()
-                if power_setpoint != self._last_power_setpoint:
-                    self._last_power_setpoint = power_setpoint
-                    self.sigPowerSetpointChanged.emit(self._last_power_setpoint, None)
-            except:
-                pass
-            try:
-                current_setpoint = laser.get_current_setpoint()
-                if current_setpoint != self._last_current_setpoint:
-                    self._last_current_setpoint = current_setpoint
-                    self.sigCurrentSetpointChanged.emit(self._last_current_setpoint, None)
-            except:
-                pass
-            try:
-                control_mode = netobtain(laser.get_control_mode())
-                if control_mode != self._last_control_mode:
-                    self._last_control_mode = control_mode
-                    self.sigControlModeChanged.emit(self._last_control_mode, None)
-            except:
-                pass
-            # Read current, power and temperature values and put them in the data buffer
-            try:
-                temperatures = laser.get_temperatures()
-                current = laser.get_current()
-                power = laser.get_power()
-                curr_time = time.time()
-            except:
-                self.log.exception('Exception in laser data query. Stopping laser polling.')
-            else:
-                self._data['time'] = np.roll(self._data['time'], -1)
-                self._data['time'][-1] = curr_time
-                for name, temp in temperatures.items():
-                    self._data[name] = np.roll(self._data[name], -1)
-                    self._data[name][-1] = temp
-                if self._data['power'] is not None:
-                    self._data['power'] = np.roll(self._data['power'], -1)
-                    self._data['power'][-1] = power
-                if self._data['current'] is not None:
-                    self._data['current'] = np.roll(self._data['current'], -1)
-                    self._data['current'][-1] = current
+            if laser.connected:
+                # Check if settings have changed by e.g. a device front panel
+                try:
+                    laser_state = netobtain(laser.get_laser_state())
+                    if laser_state != self._last_laser_state:
+                        self._last_laser_state = laser_state
+                        self.sigLaserStateChanged.emit(self._last_laser_state)
+                except:
+                    pass
+                try:
+                    shutter_state = netobtain(laser.get_shutter_state())
+                    if shutter_state != self._last_shutter_state:
+                        self._last_shutter_state = shutter_state
+                        self.sigShutterStateChanged.emit(self._last_shutter_state)
+                except:
+                    pass
+                try:
+                    power_setpoint = laser.get_power_setpoint()
+                    if power_setpoint != self._last_power_setpoint:
+                        self._last_power_setpoint = power_setpoint
+                        self.sigPowerSetpointChanged.emit(self._last_power_setpoint, None)
+                except:
+                    pass
+                try:
+                    current_setpoint = laser.get_current_setpoint()
+                    if current_setpoint != self._last_current_setpoint:
+                        self._last_current_setpoint = current_setpoint
+                        self.sigCurrentSetpointChanged.emit(self._last_current_setpoint, None)
+                except:
+                    pass
+                try:
+                    control_mode = netobtain(laser.get_control_mode())
+                    if control_mode != self._last_control_mode:
+                        self._last_control_mode = control_mode
+                        self.sigControlModeChanged.emit(self._last_control_mode, None)
+                except:
+                    pass
+                # Read current, power and temperature values and put them in the data buffer
+                try:
+                    temperatures = laser.get_temperatures()
+                    current = laser.get_current()
+                    power = laser.get_power()
+                    curr_time = time.time()
+                except:
+                    self.log.exception('Exception in laser data query. Stopping laser polling.')
+                else:
+                    self._data['time'] = np.roll(self._data['time'], -1)
+                    self._data['time'][-1] = curr_time
+                    for name, temp in temperatures.items():
+                        self._data[name] = np.roll(self._data[name], -1)
+                        self._data[name][-1] = temp
+                    if self._data['power'] is not None:
+                        self._data['power'] = np.roll(self._data['power'], -1)
+                        self._data['power'][-1] = power
+                    if self._data['current'] is not None:
+                        self._data['current'] = np.roll(self._data['current'], -1)
+                        self._data['current'][-1] = current
 
-                self.sigDataChanged.emit(self.data)
-                self.__timer.start()
+                    self.sigDataChanged.emit(self.data)
+            else:
+                pass
+            self.__timer.start()
 
     @QtCore.Slot()
     def start_query_loop(self):
@@ -276,9 +279,10 @@ class LaserLogic(LogicBase):
             return
 
         with self._thread_lock:
-            if self.module_state() == 'idle':
-                self.module_state.lock()
-                self.__timer.start()
+            if self._laser().connected:
+                if self.module_state() == 'idle':
+                    self.module_state.lock()
+                    self.__timer.start()
 
     @QtCore.Slot()
     def stop_query_loop(self):

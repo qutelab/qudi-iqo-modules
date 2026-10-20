@@ -207,6 +207,8 @@ class SimpleAWGGui(GuiBase):
 
         self._rf_control_rfEnable = QtWidgets.QPushButton('Enable Output')
         self._rf_control_rfEnable.setCheckable(True)
+        self._rf_control_rfEnable.setAutoDefault(False)
+        self._rf_control_rfEnable.setDefault(False)
         self._rf_control_rfEnable.setStyleSheet("""
             QPushButton:checked { background-color: red; }
             QPushButton:hover { background-color: grey; }
@@ -895,9 +897,6 @@ class SimpleAWGGui(GuiBase):
         channel = self.channel_combo.currentData()
         if channel is None:
             channel = self.channel_combo.currentText()
-
-        if not hasattr(self, '_waveform_dict'): # Some times waveforms had not been initialized
-            return
         
         if channel=='Stack channels':
             if not self.waveform_layout._showStackQ:
@@ -910,27 +909,25 @@ class SimpleAWGGui(GuiBase):
                 self.save_button.setText("Save all CSV")
 
             plots = []
-            for ii, channel in enumerate(self.available_channels):
-                if channel in self._waveform_dict:
-                    waveform = self._waveform_dict[channel]
-                    
-                    ds = max(1,2*(int(np.log2(len(waveform)))-13))  #Downsample when > 10000 data points.
-                    waveformds = waveform[::ds]
-                    xax = np.arange(len(waveformds))/self._logic.fs*ds
-                    #waveform=waveform[:min(len(waveform), max_length)]
+            pchans = [x for x in self.available_channels if x in list(self._waveform_dict.keys())]  #Keep correct ordering.
+            for ii, channel in enumerate(pchans):
+                plots.append(self.plot_widget_stacked.addPlot(row=ii,col=0))
+                if ii<len(pchans)-1:
+                    plots[ii].hideAxis('bottom')
+                plots[ii].getAxis('left').setWidth(50)
+                if ii>0:
+                    plots[ii].setXLink(plots[0])
+                waveform = self._waveform_dict[channel]
+                
+                ds = max(1,2*(int(np.log2(len(waveform)))-13))  #Downsample when > 10000 data points.
+                waveformds = waveform[::ds]
+                xax = np.arange(len(waveformds))/self._logic.fs*ds
+                #waveform=waveform[:min(len(waveform), max_length)]
 
-                    plots.append(self.plot_widget_stacked.addPlot(row=ii,col=0))
+                plots[ii].plot(xax,waveformds)
+                plots[ii].setTitle(channel)
+                plots[ii].getViewBox().autoRange()
 
-                    plots[ii].plot(xax,waveformds)
-
-                    if ii>0:
-                        plots[ii].setXLink(plots[0])
-
-                    if ii<len(self.available_channels)-1:
-                        plots[ii].hideAxis('bottom')
-
-                    plots[ii].getViewBox().autoRange()
-                    plots[ii].getAxis('left').setWidth(50)
             # if plots:  #This didn't work to auto set left width
             #     # Find the maximum width currently needed by any left axis
             #     max_w = max(p.getAxis('left').pixelWidth() for p in plots)

@@ -49,12 +49,18 @@ class SimpleLaserDummy(SimpleLaserInterface):
     def on_activate(self):
         """ Activate module.
         """
-        pass
+        self.connect()
 
     def on_deactivate(self):
         """ Deactivate module.
         """
-        pass
+        self.disconnect()
+
+    def connect(self):
+        self.connected=True
+
+    def disconnect(self):
+        self.connected=False
 
     def get_power_range(self):
         """ Return optical power range
@@ -157,7 +163,7 @@ class SimpleLaserDummy(SimpleLaserInterface):
 
         @return frozenset: set of supported ControlMode enums
         """
-        return frozenset({ControlMode.POWER, ControlMode.CURRENT})
+        return frozenset({ControlMode.POWER, ControlMode.CURRENT, ControlMode.POWER_MODULATION, ControlMode.CURRENT_MODULATION})
 
     def get_control_mode(self):
         """ Get the currently active control mode

@@ -47,7 +47,7 @@ class CoboltLaser(SimpleLaserInterface):
         """ Activate Module.
         """
         self.connect_laser(self.serial_interface)
-        
+
 
     def on_deactivate(self):
         """ Deactivate module
@@ -62,22 +62,26 @@ class CoboltLaser(SimpleLaserInterface):
             @return bool: connection success
         """
         try:
-            self.laser = pycobolt.CoboltLaser(port='COM3')
+            self.laser = pycobolt.CoboltLaser(port=self.serial_interface)
             idn = self.laser.send_cmd('*IDN?')
             if 'Cobolt' not in idn:
                 del self.laser
                 raise RuntimeError(f'Non cobolt device found on {self.serial_interface}')
             (self.mfg, self.model, self.serial, self.version) = idn.split(',')
         except Exception as e:
-            self.log.exception(f'Communication Failure: {e}')
+            self.log.warning(f'Unable to connect to Cobolt laser: {e}')
+            self.connected=False
             return False
         else:
+            self.connected=True
             return True
 
     def disconnect_laser(self):
         """ Close the connection to the instrument.
         """
-        self.laser.disconnect()
+        if self.connected:
+            self.laser.disconnect()
+            self.connected=False
 
     def allowed_control_modes(self):
         """ Control modes for this laser

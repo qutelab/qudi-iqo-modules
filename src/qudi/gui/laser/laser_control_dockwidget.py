@@ -52,24 +52,40 @@ class LaserControlDockWidget(AdvancedDockWidget):
         self.shutter_button = QtWidgets.QPushButton('Shutter')
         self.shutter_button.setCheckable(True)
         main_layout.addWidget(self.shutter_button, 0, 1)
+        self.connect_button = QtWidgets.QPushButton('Connect')
+        self.disconnect_button  = QtWidgets.QPushButton('Disconnect')
+        main_layout.addWidget(self.connect_button,1,0)
+        main_layout.addWidget(self.disconnect_button,1,1)
 
         group_box = QtWidgets.QGroupBox('Control Mode')
-        layout = QtWidgets.QHBoxLayout()
+        layout = QtWidgets.QGridLayout()
         group_box.setLayout(layout)
         button_group = QtWidgets.QButtonGroup(self)
-        self.control_power_radio_button = QtWidgets.QRadioButton('Power')
-        self.control_current_radio_button = QtWidgets.QRadioButton('Current')
+        self.control_power_radio_button = QtWidgets.QRadioButton('Constant Power')
+        self.control_current_radio_button = QtWidgets.QRadioButton('Constant Current')
+        self.control_powerMod_radio_button = QtWidgets.QRadioButton('Power Modulation')
+        self.control_currentMod_radio_button = QtWidgets.QRadioButton('Current Modulation')
         button_group.addButton(self.control_power_radio_button)
         button_group.addButton(self.control_current_radio_button)
-        layout.addWidget(self.control_power_radio_button)
-        layout.addWidget(self.control_current_radio_button)
+        button_group.addButton(self.control_powerMod_radio_button)
+        button_group.addButton(self.control_currentMod_radio_button)
+        layout.addWidget(self.control_power_radio_button,0,0)
+        layout.addWidget(self.control_current_radio_button,0,1)
+        layout.addWidget(self.control_powerMod_radio_button,1,0)
+        layout.addWidget(self.control_currentMod_radio_button,1,1)
         self.control_power_radio_button.clicked.connect(
             lambda: self.sigControlModeChanged.emit(ControlMode.POWER)
         )
         self.control_current_radio_button.clicked.connect(
             lambda: self.sigControlModeChanged.emit(ControlMode.CURRENT)
         )
-        main_layout.addWidget(group_box, 1, 0, 1, 2)
+        self.control_powerMod_radio_button.clicked.connect(
+            lambda: self.sigControlModeChanged.emit(ControlMode.POWER_MODULATION)
+        )
+        self.control_currentMod_radio_button.clicked.connect(
+            lambda: self.sigControlModeChanged.emit(ControlMode.CURRENT_MODULATION)
+        )
+        main_layout.addWidget(group_box, 2, 0, 1, 2)
 
         group_box = QtWidgets.QGroupBox('Power')
         layout = QtWidgets.QVBoxLayout()
@@ -98,7 +114,7 @@ class LaserControlDockWidget(AdvancedDockWidget):
         self.power_slider.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                                         QtWidgets.QSizePolicy.Policy.Expanding)
         layout.addWidget(self.power_slider)
-        main_layout.addWidget(group_box, 2, 0)
+        main_layout.addWidget(group_box, 3, 0)
 
         group_box = QtWidgets.QGroupBox('Current')
         layout = QtWidgets.QVBoxLayout()
@@ -126,5 +142,5 @@ class LaserControlDockWidget(AdvancedDockWidget):
         self.current_slider.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                                           QtWidgets.QSizePolicy.Policy.Expanding)
         layout.addWidget(self.current_slider)
-        main_layout.addWidget(group_box, 2, 1)
+        main_layout.addWidget(group_box, 3, 1)
         main_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Expanding)
