@@ -29,12 +29,12 @@ class AWG_DN2(PulserInterface):
         """
 
     ip_address = ConfigOption('awg_ip_address', missing='error')
-    _timeout = ConfigOption('timeout', 0, missing='warn')
-    default_sample_rate = ConfigOption('default_sample_rate', missing='warn')
-    reps = ConfigOption("reps", 0, missing='warn')
-    voltage = ConfigOption("volts", 1, missing='warn')
-    resistance = ConfigOption("ohms", 'low', missing='warn')
-    _init_channels = ConfigOption("channels", "", missing='warn')
+    _timeout = ConfigOption('timeout', 0, missing='nothing')
+    default_sample_rate = ConfigOption('default_sample_rate', missing='nothing')
+    reps = ConfigOption("reps", 0, missing='nothing')
+    voltage = ConfigOption("volts", 1, missing='nothing')
+    resistance = ConfigOption("ohms", 'low', missing='nothing')
+    _init_channels = ConfigOption("channels", "", missing='nothing')
     
 
     def __init__(self, config, **kwargs):

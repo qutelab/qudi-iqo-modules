@@ -70,64 +70,71 @@ class MicrowaveSRSSG(MicrowaveInterface):
     def on_activate(self):
         """ Initialisation performed during activation of the module. """
         # trying to load the visa connection to the module
-        self._rm = visa.ResourceManager()
-        self._device: MessageBasedResource = self._rm.open_resource(  # type: ignore
-            self._visa_address,
-            timeout=int(self._comm_timeout * 1000),
-            read_termination='\r\n'
-        )
+        try:
+            self._rm = visa.ResourceManager()
+            self._device: MessageBasedResource = self._rm.open_resource(  # type: ignore
+                self._visa_address,
+                timeout=int(self._comm_timeout * 1000),
+                read_termination='\r\n'
+            )
 
-        # Reset device
-        self._write('*RST')
-        self._write('ENBR 0')  # turn off Type N output
-        self._write('ENBL 0')  # turn off BNC output
+            # Reset device
+            self._write('*RST')
+            self._write('ENBR 0')  # turn off Type N output
+            self._write('ENBL 0')  # turn off BNC output
 
-        # model identifiers are of the form SG3XY:
-        # X: 8 for signal generator, 9 for vector signal generator
-        # Y: specifies the maximum frequency of the N type output
-        model = self._device.query('*IDN?').strip().split(',')[1]
-        if not model.startswith('SG3'):
-            raise ValueError(f'Unknown model identifier "{model}". Is the address correct?')
+            # model identifiers are of the form SG3XY:
+            # X: 8 for signal generator, 9 for vector signal generator
+            # Y: specifies the maximum frequency of the N type output
+            model = self._device.query('*IDN?').strip().split(',')[1]
+            if not model.startswith('SG3'):
+                raise ValueError(f'Unknown model identifier "{model}". Is the address correct?')
 
-        max_freq = model[4]
-        if max_freq == '2':
-            freq_limits = (1e6, 2.025e9)
-        elif max_freq == '4':
-            freq_limits = (1e6, 4.050e9)
-        elif max_freq == '6':
-            freq_limits = (1e6, 6.075e9)
-        else:
-            raise ValueError(f'Unknown model identifier "{model}". Is the address correct?')
+            max_freq = model[4]
+            if max_freq == '2':
+                freq_limits = (1e6, 2.025e9)
+            elif max_freq == '4':
+                freq_limits = (1e6, 4.050e9)
+            elif max_freq == '6':
+                freq_limits = (1e6, 6.075e9)
+            else:
+                raise ValueError(f'Unknown model identifier "{model}". Is the address correct?')
 
-        vector = model[3]
-        if vector == '8':
-            self._is_vector_sg = False
-        elif vector == '9':
-            self._is_vector_sg = True
-        else:
-            raise ValueError(f'Unknown model identifier "{model}". Is the address correct?')
+            vector = model[3]
+            if vector == '8':
+                self._is_vector_sg = False
+            elif vector == '9':
+                self._is_vector_sg = True
+            else:
+                raise ValueError(f'Unknown model identifier "{model}". Is the address correct?')
 
-        self._constraints = MicrowaveConstraints(
-            power_limits=(-110, 16.5),
-            frequency_limits=freq_limits,
-            scan_size_limits=(2, 2000),
-            sample_rate_limits=(1e-6, 50e3),
-            scan_modes=(SamplingOutputMode.JUMP_LIST,)
-        )
+            self._constraints = MicrowaveConstraints(
+                power_limits=(-110, 16.5),
+                frequency_limits=freq_limits,
+                scan_size_limits=(2, 2000),
+                sample_rate_limits=(1e-6, 50e3),
+                scan_modes=(SamplingOutputMode.JUMP_LIST,)
+            )
 
-        self._scan_frequencies = None
-        self._scan_power = self._constraints.min_power
-        self._scan_sample_rate = self._constraints.max_sample_rate
-        self._in_cw_mode = True
-        self._pulse_enabled = False
+            self._scan_frequencies = None
+            self._scan_power = self._constraints.min_power
+            self._scan_sample_rate = self._constraints.max_sample_rate
+            self._in_cw_mode = True
+            self._pulse_enabled = False
+            self.connected=True
+        except Exception as e:
+            self.log.warning(f'Unable to connect to RF Signal Generator, restart module mw_source_srssg to try again.: {e}')
+            self.connected=False
 
     def on_deactivate(self):
         """ Cleanup performed during deactivation of the module."""
-        self.off()
-        self._device.close()
-        self._rm.close()
-        self._device = None
-        self._rm = None
+        if self.connected:
+            self.off()
+            self._device.close()
+            self._rm.close()
+            self._device = None
+            self._rm = None
+            self.connected=False
 
     @property
     def constraints(self):
