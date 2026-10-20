@@ -74,11 +74,12 @@ class MicrowaveDummy(MicrowaveInterface):
         self._scan_mode = SamplingOutputMode.JUMP_LIST
         self._scan_sample_rate = 100
         self._is_scanning = False
+        self.connected=True
 
     def on_deactivate(self):
         """ Cleanup performed during deactivation of the module.
         """
-        pass
+        self.connected=False
 
     @property
     def constraints(self):

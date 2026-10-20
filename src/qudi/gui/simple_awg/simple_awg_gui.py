@@ -174,7 +174,7 @@ class SimpleAWGGui(GuiBase):
         ### RF Control Window for manual control ###
 
         self.rfgen_button = QtWidgets.QPushButton('RF Generator Control')
-        if self._microwave.is_connected:
+        if self._microwave().connected:
             self.rfgen_button.clicked.connect(self._load_rfcontrol)
         else:
             self.rfgen_button.setDisabled(True)
@@ -1751,11 +1751,11 @@ class SimpleAWGGui(GuiBase):
 
 
     def _load_rfcontrol(self, checked=False):
-        if self._microwave.is_connected:
+        if self._microwave().connected:
             self._rf_control_window.show()
 
     def _rf_control_send(self,frequency=None,power=None,modulation=None,rfEnable=None):
-        if not self._microwave.is_connected:
+        if not self._microwave().connected:
             self.log.warning("RF Control called but microwave module not connected, ignoring")
             return
         if frequency is not None:
@@ -1786,7 +1786,7 @@ class SimpleAWGGui(GuiBase):
                 self.log.warning(e)
 
     def _rf_control_update(self):
-        if not self._microwave.is_connected:
+        if not self._microwave().connected:
             self.log.warning("RF Control called but microwave module not connected, ignoring")
             return
         self._rf_control_frequency.blockSignals(True)
@@ -1805,7 +1805,7 @@ class SimpleAWGGui(GuiBase):
         self._rf_control_rfEnable.blockSignals(False)
 
     def _rf_control_check_for_lock(self):
-        if not self._microwave.is_connected:
+        if not self._microwave().connected:
             return
         if self._microwave().module_state() != 'idle':
             self._rf_control_frequency.setDisabled(True)
