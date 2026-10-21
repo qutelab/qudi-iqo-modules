@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 
 from qudi.util.mutex import RecursiveMutex, Mutex
 from qudi.core.configoption import ConfigOption
+from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 #Logic imports for automation functions
 from qudi.logic.scanning_probe_logic import ScanningProbeLogic
 from qudi.logic.scanning_optimize_logic import ScanningOptimizeLogic
@@ -267,7 +268,33 @@ class FunctionCatalog(QtCore.QObject):
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
         self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
-    
+  
+    @register(dep='simple_scan_logic', params={
+        "t_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
+        "t_end": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[1]},
+        "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
+        "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
+        "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
+        "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
+                        "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
+        "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedRabiScanner._static_set_parameters['RF Power'][1]},
+        "Frequency": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedRabiScanner._static_set_parameters['Frequency'][1]},
+    })
+    def record_Rabi_ODMR(self, t_start, t_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power, Frequency):
+        # Implementation of simple scan specifically using Pulsed ODMR to control its specific parameters.
+        self.simple_scan_logic().scan_device = 'Rabi'
+        self.simple_scan_logic().x_range = (t_start,t_end,number_steps)
+        self.simple_scan_logic().time_per = time_per
+        self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().number_scans = number_scans
+        self.simple_scan_logic().scan_order = scan_order
+        self.simple_scan_logic().set_static_set_parameter_value('Rabi','RF Power', RF_power)
+        self.simple_scan_logic().set_static_set_parameter_value('Rabi','Frequency', Frequency)
+        
+        self.simple_scan_logic().start_scan()
+        self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
+        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)    
     
     @register(dep='simple_scan_logic', params={
         "scan_device": {"type": [str], "entries": lambda ctx: ctx.simple_scan_logic().device_dict, 
@@ -392,6 +419,7 @@ class ParamDialog(QDialog):
                 widget = qw.QCheckBox()
                 widget.setChecked(val)
 
+
             else:
                 default = spec.get("default")
                 if callable(default):
@@ -401,9 +429,8 @@ class ParamDialog(QDialog):
                     widget = QSpinBox()
                     widget.setMaximum(99999999)  #SpinBoxes typically max at 99
                 else:
-                    widget = QDoubleSpinBox()
-                    widget.setRange(-1e12,1e12)  #Arbitrarily large hopefully
-                    widget.setDecimals(6)
+                    widget = ScienDSpinBox()
+                    #widget.setDecimals(6)
                 widget.setValue(val)
             widget.setMinimumWidth(200)
 

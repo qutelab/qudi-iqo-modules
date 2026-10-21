@@ -429,8 +429,8 @@ class SimpleScanLogic(LogicBase):
         def _pulsed_start_scan(self):
             self._pulsed_initialGate = self._data_scanner()._gate_on_external_clock
             self._data_scanner().set_external_clock(gate=True)
-            if self._microwave().cw_frequency < 400e6:
-                self._microwave().set_pulsed(frequency=1e8)
+            if self._microwave().cw_frequency < 1e9:
+                self._microwave().set_pulsed(frequency=1e9)
             else:
                 self._microwave().set_pulsed()
             if self._awg() is not None:  #Just for dummy capability.

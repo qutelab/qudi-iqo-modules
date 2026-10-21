@@ -263,8 +263,8 @@ class MicrowaveSRSSG(MicrowaveInterface):
                 # self._write('STYP 0')
             if frequency is not None:
                 self._write(f'FREQ {frequency:e}')
-            elif float(self._device.query('FREQ?'))<1e6:  #Need to use manual query/write due to thread lock.
-                self._write(f'FREQ 1e6')  #Minimum frequency for RF output
+            elif float(self._device.query('FREQ?'))<1e9:  #Need to use manual query/write due to thread lock.
+                self._write(f'FREQ 1e9')  #Minimum frequency for modulated output
             if power is not None:
                 self._write(f'AMPR {power:f}')
             
