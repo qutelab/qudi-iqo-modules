@@ -22,7 +22,7 @@ If not, see <https://www.gnu.org/licenses/>.
 from qudi.core.configoption import ConfigOption
 from qudi.interface.simple_laser_interface import SimpleLaserInterface
 from qudi.interface.simple_laser_interface import ControlMode, ShutterState, LaserState
-import pycobolt
+import pycobolt # type: ignore
 
 
 class CoboltLaser(SimpleLaserInterface):
