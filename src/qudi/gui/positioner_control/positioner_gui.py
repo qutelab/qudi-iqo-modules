@@ -354,13 +354,13 @@ class PositionerAxisWidget(QtWidgets.QWidget):
     def update_values(self, values):
         if 'acin' in values:
             if type(values['acin']) is str:
-                val = True if values['acin'] == 'ON' else False
+                val = True if values['acin'].upper() == 'ON' else False
             else:
                 val = bool(values['acin'])
             self.acin_switch.setChecked(val)
         if 'dcin' in values:
             if type(values['dcin']) is str:
-                val = True if values['dcin'] == 'ON' else False
+                val = True if values['dcin'].upper() == 'ON' else False
             else:
                 val = bool(values['dcin'])
             self.dcin_switch.setChecked(val)

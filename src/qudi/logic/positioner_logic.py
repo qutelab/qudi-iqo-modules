@@ -28,6 +28,7 @@ from qudi.core.configoption import ConfigOption
 from qudi.util.mutex import RecursiveMutex
 from qudi.interface.positioner_interface import PositionerInterface
 
+from time import sleep  # Only used for capacitance measurement
 
 class PositionerLogic(LogicBase):
     """ Logic module to interact with the Attocube ANC300 positioner hardware.
@@ -149,9 +150,12 @@ class PositionerLogic(LogicBase):
 
     @QtCore.Slot(str, str)
     def set_mode(self, axis, value):
-        with self._thread_lock:
-            value = self._positioner().set_mode(axis, value)
-        self.sigValuesUpdated.emit(axis, {'mode': value})
+        if 'cap' in value.lower():
+            self.measure_capacitance()
+        else:
+            with self._thread_lock:
+                value = self._positioner().set_mode(axis, value)
+            self.sigValuesUpdated.emit(axis, {'mode': value})
 
     @QtCore.Slot(str, object)  #Accepts int or float
     def set_filt(self, axis, value):
@@ -191,6 +195,24 @@ class PositionerLogic(LogicBase):
     def stop(self, axis):
         with self._thread_lock:
             self._positioner().stop(axis)
+
+    @QtCore.Slot(str)
+    def measure_capacitance(self,axis):
+        with self._thread_lock:
+            self._positioner().set_mode(axis, 'CAP')
+            for ii in range(20):
+                sleep(0.2)
+                if self._positioner.get_mode(axis)=='GND':
+                    break
+                if ii==19:
+                    self.log.warning('measure_capacitance timed out')
+            new_values = {
+                'mode': self._positioner.get_mode(axis),
+                'cap': self._positioner.get_cap(axis),
+            }
+        self.sigValuesUpdated(axis,new_values)
+        return new_values['cap']
+
 
     @QtCore.Slot()
     def _poll_activity_body(self):

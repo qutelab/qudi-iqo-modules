@@ -20,28 +20,40 @@ from qudi.core.configoption import ConfigOption
 from qudi.core.statusvariable import StatusVar
 from qudi.interface.positioner_interface import PositionerInterface
 
+import pyvisa
+
 
 class AttocubeANC300(PositionerInterface):
     """ Hardware module for Attocube ANC300 positioner controller
     Example config for copy-paste:
 
     anc300:
-        module.Class: 'positioner.AttocubeANC300'
+        module.Class: 'positioner.attocube_positioner_lua.AttocubeANC300'
         options:
             ip_address: 
             port: 7231 #Optional, default is 7231 for LUA port
+            password : 123456  #Optional, default is 123456
+            
+            axis_dict: #Optional
+                X : 3
+                Y : 2
+                Z : 1
+            restrict_z: True #Optional, default True
     """
     _ip_address = ConfigOption('ip_address', missing='error')
     _port = ConfigOption('port', default=7231)
+    _password = ConfigOption('password', default='123456')
 
     # axis-name to controller-slot mapping, configurable per unit
     _axis_dict = ConfigOption('axis_dict', default={'X': 3, 'Y': 2, 'Z': 1})
     _restrict_z = ConfigOption('restrict_z', default=True)
+    
 
     EOL = '\r\n'
+    EOLR = '\n'
 
-    mode_options = ('GND', 'INP', 'CAP', 'STP', 'OSV', 'STPP', 'STPM')
-    mode_options_labels = ('Ground', 'Input', 'Capacitance', 'Step', 'Offset', 'Step + Offset', 'Step - Offset')
+    mode_options = ('GND', 'INP', 'CAP', 'OSV', 'STP', 'STPP', 'STPM')
+    mode_options_labels = ('Ground', 'Input', 'Capacitance', 'Offset', 'Step', 'Step + Offset', 'Step - Offset')
     filt_options = (0, 1, 2)  #, 3
     filt_options_labels = ('OFF', '16 Hz', '160 Hz')  #AMN300 Options
     #filt_options_labels = ('1600 Hz', '160 Hz', '16 Hz', '1.6 Hz')  #AMN200 Options
@@ -50,12 +62,42 @@ class AttocubeANC300(PositionerInterface):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._axis_dict_rev = dict()
+        
+        self._password = str(self._password)
 
     def on_activate(self):
         """ Activate module.
         """
-        self._anc300.open()
-        self._available_axes = set(self._axis_dict.values())  # TODO Get Available from device.
+        rm = pyvisa.ResourceManager()
+
+        # Replace with your device's actual IP address and raw socket port
+        # Common raw socket ports for instruments include 5025 or 5024
+
+        # Open the connection using the SOCKET resource string
+        resource_string = f"TCPIP0::{self._ip_address}::{self._port}::SOCKET"
+        self._anc300 = rm.open_resource(resource_string)
+
+        # CRITICAL: Socket connections require explicit termination characters
+        self._anc300.read_termination = self.EOLR
+        self._anc300.write_termination = self.EOL
+
+        # Readout startup lines
+        self._anc300.read_raw()  #Discard first line that has binary
+        self._flush_input()
+        
+        ret = self._query(self._password)
+        if "success" not in ret.lower():
+            raise Exception(ret)
+
+        # Check for available axes
+        self._available_axes = []
+        for ii in range(1,9):
+            try:
+                ret = self._queryP(f'm{ii}.serial')
+                self._available_axes.append(ii)
+            except:
+                continue
+        self._available_axes = set(self._available_axes)
 
         self._axis_dict = dict(self._axis_dict)
         axis_dict_new = {}
@@ -103,19 +145,58 @@ class AttocubeANC300(PositionerInterface):
             raise ValueError(f"Invalid axis: {axis}. Must be a string or an integer.")
 
 
-    def _query(self, prop):
-        """ Query a property. """
-        self._anc300.flush_read()
-        self._anc300.write(f'print({prop})' + self.EOL)
-        ret = self._anc300.read_until(self.EOL)
-        return ret.strip()
+    def _write(self, message, skipcheck=False):
+        '''
+        Send commands that do not expect a response, check for error unless skipcheck=True
+        '''
+        timeO = self._anc300.timeout
+        self._anc300.timeout=100  #Temporary fast timeout for write messages.
+        self._anc300.write(message)
+        ret = self._anc300.read()  #Echo
+        if not skipcheck:
+            ret = self._anc300.read()  #Nothing or error
+        self._anc300.timeout = timeO
+        if "ERROR" in ret:
+            raise ret
+
+    def _query(self,request):
+        '''
+        Send commands that expect a response
+        '''
+        self._flush_input()
+        self._anc300.write(request)
+        ret = self._anc300.read()  #Echo
+        ret = self._anc300.read()  #Response or error
+        if "ERROR" in ret:
+            raise Exception(ret)
+        else:
+            return ret
+
+    def _queryP(self,request):
+        '''
+        Send command wrapped in print for requesting info
+        '''
+        return self._query(f'print({request})')
 
     def _set_and_check(self, prop, value):
         """ Set a command and check the result. """
-        self._anc300.write(f'{prop}={value}' + self.EOL)
+        self._anc300.write(f'{prop}={value}')
         #if err is not None:
         #    raise Exception(f'Error in communication: {err}')
-        return self._query(prop)
+        return self._queryP(prop)
+        
+    def _flush_input(self,show_flush=False):
+        timeO = self._anc300.timeout
+        self._anc300.timeout=100  #Temporary fast timeout for flush messages.
+        while True:
+            try:
+                line = self._anc300.read()
+                if show_flush:
+                    print(line)
+            except:
+                break
+        self._anc300.timeout=timeO
+        
 
 
 
@@ -133,7 +214,7 @@ class AttocubeANC300(PositionerInterface):
     def get_acin(self,axis):
         """ Get the ACIN value for a given axis, ON or OFF, or bool. """
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.acin') #Returns int, 0 or 1
+        ret = self._queryP(f'm{axis}.acin') #Returns int, 0 or 1
         return ['OFF','ON'][int(ret)]
 
     def set_dcin(self,axis, value):
@@ -149,7 +230,7 @@ class AttocubeANC300(PositionerInterface):
     def get_dcin(self,axis):
         """ Get the DCIN value for a given axis, ON or OFF, or bool. """
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.dcin')  #Returns int, 0 or 1
+        ret = self._queryP(f'm{axis}.dcin')  #Returns int, 0 or 1
         return ['OFF','ON'][int(ret)]
 
     def set_mode(self,axis, value):
@@ -165,12 +246,15 @@ class AttocubeANC300(PositionerInterface):
         """
         if value in self.mode_options_labels:
             value = self.mode_options[self.mode_options_labels.index(value)]
+        value = value.upper()
         if value not in self.mode_options:
             raise ValueError(f"Invalid value for MODE: {value}. Must be in {self.mode_options}.")
 
         axis = self._validate_axis(axis)
-        ret = self._set_and_check(f'm{axis}.mode', value)
-        return str(ret)
+        ret = self._set_and_check(f'm{axis}.mode', value)        
+        ### TODO, check if mode is converting to name rather than int value.
+        mode = self.mode_options[int(ret)]
+        return mode
 
     def get_mode(self,axis):
         """ 
@@ -184,8 +268,9 @@ class AttocubeANC300(PositionerInterface):
         STPM : Offset - step
         """
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.mode')
-        return int(ret)
+        ret = self._queryP(f'm{axis}.mode')
+        mode = self.mode_options[int(ret)]
+        return mode
 
     def set_filt(self,axis, value):
         """ Set the FILTER value for a given axis: 0, 1, 2, 3, 4
@@ -215,12 +300,12 @@ class AttocubeANC300(PositionerInterface):
         >=4      1600 Hz  Off
         """
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.filt')
+        ret = self._queryP(f'm{axis}.filt')
         return int(ret)
 
     def get_cap(self,axis): #TODO Check if this measures or just reports.
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.cap')
+        ret = self._queryP(f'm{axis}.cap')
         return float(ret)
 
     def set_step_freq(self,axis,value):
@@ -234,7 +319,7 @@ class AttocubeANC300(PositionerInterface):
     def get_step_freq(self,axis):
         """ Get the step frequency, from 1 to 10000 Hz"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.frq')
+        ret = self._queryP(f'm{axis}.frq')
         return float(ret)
 
     def set_step_voltage(self,axis,value):
@@ -248,7 +333,7 @@ class AttocubeANC300(PositionerInterface):
     def get_step_voltage(self,axis):
         """ Get the step voltage, from 0 to 150 V"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.stp')
+        ret = self._queryP(f'm{axis}.stp')
         return float(ret)
     
     def set_offset_voltage(self,axis,value):
@@ -262,43 +347,43 @@ class AttocubeANC300(PositionerInterface):
     def get_offset_voltage(self,axis):
         """ Get the step voltage, from 0 to 150 V"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.osv')
+        ret = self._queryP(f'm{axis}.osv')
         return float(ret)
 
     def get_output_voltage(self,axis):
         """ Get the output voltage"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.out')
+        ret = self._queryP(f'm{axis}.out')
         return float(ret)
 
     def get_activity_indicator(self,axis):
         """ Get the activity indicator status"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.act')
-        return bool(ret)
+        ret = self._queryP(f'm{axis}.act')
+        return bool(int(ret))
 
     def get_limit_indicator(self,axis):
         """ Get the safety limit indicator status"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.safe')
+        ret = self._queryP(f'm{axis}.safe')
         return bool(ret)
 
     def get_step_frequency_limit(self,axis):
         """ Get the step frequency limit value"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.frqlimit')
+        ret = self._queryP(f'm{axis}.frqlimit')
         return bool(ret)
 
     def get_step_voltage_limit(self,axis):
         """ Get the step voltage limit value"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.stplimit')
+        ret = self._queryP(f'm{axis}.stplimit')
         return bool(ret)
 
     def get_output_voltage_limit(self,axis):
         """ Get the output voltage limit value"""
         axis = self._validate_axis(axis)
-        ret = self._query(f'm{axis}.outlimit')
+        ret = self._queryP(f'm{axis}.outlimit')
         return bool(ret)
 
     def trigger_up(self,axis,value):
