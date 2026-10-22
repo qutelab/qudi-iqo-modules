@@ -38,6 +38,7 @@ class PDL810(SimpleLaserInterface):
             #maxcurrent: 155 # in mA
 
     """
+    has_power_control = False  #For setting default control in scanner
 
     #serial_interface = ConfigOption(name='interface', default='COM3', missing='warn')
     #maxpower = ConfigOption(name='maxpower', default=40.0, missing='warn')
@@ -54,10 +55,8 @@ class PDL810(SimpleLaserInterface):
         """
         self.disconnect_laser()
 
-    def connect_laser(self, interface):
+    def connect_laser(self):
         """ Connect to Instrument.
-
-            @param str interface: visa interface identifier
 
             @return bool: connection success
         """
@@ -116,8 +115,8 @@ class PDL810(SimpleLaserInterface):
         @return ControlMode: active control mode
         """
         return self._interpret_control_mode('CURRENT')
-        mode = self.laser.get_mode()
-        return self._interpret_control_mode(mode)
+        #mode = self.laser.get_mode()
+        #return self._interpret_control_mode(mode)
 
     def set_control_mode(self, mode):
         """ Set actve control mode
@@ -126,15 +125,15 @@ class PDL810(SimpleLaserInterface):
         @return ControlMode: actual control mode
         """
         return
-        mode = self._interpret_control_mode(mode)
-        if mode == ControlMode.POWER:
-            self.laser.constant_power()
-        elif mode == ControlMode.CURRENT:
-            self.laser.constant_current()
-        elif mode == ControlMode.POWER_MODULATION:
-            self.laser.power_modulation_mode()
-        elif mode == ControlMode.CURRENT_MODULATION:
-            self.laser.current_modulation_mode()
+        # mode = self._interpret_control_mode(mode)
+        # if mode == ControlMode.POWER:
+            # self.laser.constant_power()
+        # elif mode == ControlMode.CURRENT:
+            # self.laser.constant_current()
+        # elif mode == ControlMode.POWER_MODULATION:
+            # self.laser.power_modulation_mode()
+        # elif mode == ControlMode.CURRENT_MODULATION:
+            # self.laser.current_modulation_mode()
 
     def get_power(self):
         """ Current laser power
@@ -216,9 +215,9 @@ class PDL810(SimpleLaserInterface):
         """
         self.laser.read()
         
-        if self.laser.is_locked():
-            return LaserState.LOCKED
-        elif self.laser.is_soft_locked():
+        #if self.laser.is_locked():
+        #    return LaserState.LOCKED
+        if self.laser.is_soft_locked():
             return LaserState.OFF
         else:
             return LaserState.ON

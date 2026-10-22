@@ -55,7 +55,7 @@ class SimpleLaserInterface(Base):
     and a temperature regulation control.
 
     """
-
+    has_power_control=False  #Default
     @abstractmethod
     def get_power_range(self):
         """ Return laser power range

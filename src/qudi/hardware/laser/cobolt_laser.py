@@ -42,6 +42,7 @@ class CoboltLaser(SimpleLaserInterface):
     serial_interface = ConfigOption(name='interface', default='COM3', missing='warn')
     maxpower = ConfigOption(name='maxpower', default=40.0, missing='warn')
     maxcurrent = ConfigOption(name='maxcurrent', default=155.0, missing='warn')
+    has_power_control = True  #For setting default control in scanner
 
     def on_activate(self):
         """ Activate Module.
@@ -62,7 +63,7 @@ class CoboltLaser(SimpleLaserInterface):
             @return bool: connection success
         """
         try:
-            self.laser = pycobolt.CoboltLaser(port=self.serial_interface)
+            self.laser = pycobolt.Cobolt06(port=self.serial_interface)
             idn = self.laser.send_cmd('*IDN?')
             if 'Cobolt' not in idn:
                 del self.laser
@@ -148,7 +149,10 @@ class CoboltLaser(SimpleLaserInterface):
 
         @return float: power setpoint in W
         """
-        return self.laser.get_power_setpoint()/1000
+        if self.get_control_mode() == ControlMode.POWER_MODULATION:
+           return self.laser.get_modulation_power()/1000
+        else:
+            return self.laser.get_power_setpoint()/1000
         
     def get_power_range(self):
         """ Get range for laser power
@@ -164,7 +168,10 @@ class CoboltLaser(SimpleLaserInterface):
         """
         rng = self.get_power_range()
         if rng[0]<=power<=rng[1]:
-            self.laser.set_power(power*1000)
+            if self.get_control_mode()==ControlMode.POWER_MODULATION:
+                self.laser.set_modulation_power(power*1000)
+            else:
+                self.laser.set_power(power*1000)
         else:
             raise ValueError('Requested power above maximum configured value')
 
@@ -194,7 +201,10 @@ class CoboltLaser(SimpleLaserInterface):
 
         @return float: laser current setpoint
         """
-        return self.laser.get_current_setpoint()
+        if self.get_control_mode() == ControlMode.CURRENT_MODULATION:
+            return self.laser.get_modulation_current()
+        else:
+            return self.laser.get_current_setpoint()
 
     def set_current(self, current):
         """ Set laser current setpoint
@@ -204,7 +214,10 @@ class CoboltLaser(SimpleLaserInterface):
         """
         rng = self.get_current_range()
         if rng[0]<=current<=rng[1]:
-            self.laser.set_current(current)
+            if self.get_control_mode()==ControlMode.CURRENT_MODULATION:
+                self.laser.set_modulation_current(current)
+            else:
+                self.laser.set_current(current)
         else:
             raise ValueError("Requested current outside current range")
 

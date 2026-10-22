@@ -99,21 +99,26 @@ class AndorSpectrometer(SpectrometerInterface):
         """
         if self._camera_direct is None and self._camera_side is None:
             raise RuntimeError("Cannot load spectrometer, no camera configured")
-        self._dll = cdll.LoadLibrary(self._dll_location)
-        self._dll.ShamrockInitialize(self._ini_location)
+        try:
+            self._dll = cdll.LoadLibrary(self._dll_location)
+            self._dll.ShamrockInitialize(self._ini_location)
 
-        #Setup Spectrometer-Camera link, detector parameters (number of pixels, pixel width) from the camera
-        self.exposure_time = self._exposure_time
-        self._get_output_port()  # To cache for camera reference.
-        
-        self.load_calibration()
-        self.grating_dict = self._get_grating_dict()
-
+            #Setup Spectrometer-Camera link, detector parameters (number of pixels, pixel width) from the camera
+            self.exposure_time = self._exposure_time
+            self._get_output_port()  # To cache for camera reference.
+            
+            self.load_calibration()
+            self.grating_dict = self._get_grating_dict()
+            self.connected=True
+        except Exception as e:
+            self.log.warning(f'Unable to connect to Spectrometer, restart andor_spectrometer module to retry: {e}')
+            self.connected=False
 
     def on_deactivate(self):
         """ Deactivate module.
         """
         self._dll.ShamrockClose()
+        self.connected=False
 
     def record_spectrum(self):
         """ Record spectrum from Andor spectrometer.

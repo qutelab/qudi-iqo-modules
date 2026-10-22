@@ -67,6 +67,7 @@ class SimpleScanLogic(LogicBase):
     _laser = Connector(name='laser', interface=SimpleLaserInterface, optional=True)
     _microwave = Connector(name='microwave', interface=MicrowaveInterface, optional=True)
     _awg = Connector(name='awg', interface='SimpleAWGLogic', optional=True)
+    _powermeter = Connector(name='powermeter', interface='ProcessValueInterface', optional=True)
 
     # declare config options
     _save_thumbnails = ConfigOption(name='save_thumbnails', default=True)
@@ -237,6 +238,33 @@ class SimpleScanLogic(LogicBase):
                 return y
             else: 
                 return None
+                
+        def set_y_getter(self, y_getter, data_labels=None, len_y=None, data_units=None): #set or remove a y_getter after initialization.
+            if y_getter is not None:
+                if len_y is None:
+                    if data_labels is not None:
+                        len_y = len(data_labels)
+                    else:
+                        raise ValueError('len_y must be provided if y_getter is set and data_labels is not provided.')
+                else:
+                    if data_labels is not None and len(data_labels) != len_y:
+                        raise ValueError('data_labels length must be equal to len_y')
+                    elif data_labels is None:
+                        data_labels = [f'y{i}' for i in range(len_y)]
+                    if data_units is not None and len(data_units) != len_y:
+                        raise ValueError('data_units length must be equal to len_y')
+                    elif data_units is None:
+                        data_units = [''] * (len_y)
+                self._y_getter=y_getter
+                self._len_y=len_y
+                self._data_labels = [self._data_labels[0]]+data_labels
+                self._data_units = [self._data_units[0]]+data_units
+            else:
+                self._y_getter=None
+                self._len_y=0
+                self._data_labels = [self._data_labels[0]]
+                self._data_units = [self._data_units[0]]
+            
 
         @property
         def len_y(self):
@@ -348,7 +376,7 @@ class SimpleScanLogic(LogicBase):
         self._scan_worker = self.ScanWorker(self._data_scanner)
         self._scan_worker.moveToThread(self._acquire_thread)
         self._acquire_thread.start()
-
+        
 
         #Below is where we set up the scan devices. Each device needs a name, a function to set the x value, 
         #  and optionally a function to get y value(s) and labels/units for the data. The x setter will be called
@@ -373,12 +401,16 @@ class SimpleScanLogic(LogicBase):
         
         def enable_daq_internal_clock(self): #Ensure enable clock enabled for non-gated/pulsed measurements.
             self._data_scanner().set_external_clock(False,False,False)
-        
+
+        if self._laser().has_power_control:
+            laserX = self._laser().set_power
+        else:
+            laserX = self._laser().set_current
         self.laserScanner = self.ScanDevice('Laser',
-                lambda x: self._laser().set_power(x),
+                laserX,
                 #lambda : self._laser().get_power(),
                 data_labels=['Set Power'], # x, y1, y2,...
-                data_units=['W'],
+                data_units=['%'],
                 static_read_parameters={},
                 static_set_parameters={}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
                 start_function=lambda : (enable_daq_internal_clock(self)),
@@ -386,6 +418,8 @@ class SimpleScanLogic(LogicBase):
                 dependencies=['_laser'],
                 parent = self
         )
+        if self._powermeter.is_connected and self._powermeter().connected:
+            self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
         
         #This ODMR version just scans frequency manually in CW mode.
 

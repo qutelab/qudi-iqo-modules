@@ -155,20 +155,25 @@ class DU401A(CameraInterface):
     def on_activate(self):
         """ Initialisation performed during activation of the module.
          """
-        self._dll = cdll.LoadLibrary(self._dll_location)
-        self._dll.Initialize()
-        nx_px, ny_px = c_int(), c_int()
-        self._get_detector(nx_px, ny_px)
-        self._det_width, self._det_height = nx_px.value, ny_px.value
-        xsizeC,ysizeC = c_float(), c_float()
-        self._get_pixel_size(xsizeC,ysizeC)
-        self._xsize,self._ysize = xsizeC.value,ysizeC.value # in microns
-        self.set_read_mode(self._read_mode)
-        self._set_acquisition_mode(self._acquisition_mode)
-        self._set_trigger_mode(self._trigger_mode)
-        self._set_exposuretime(self._exposure)
-        self._set_cooler(self._cooler_on)
-        self._set_temperature(self._temperature_setpoint)
+        try:
+            self._dll = cdll.LoadLibrary(self._dll_location)
+            self._dll.Initialize()
+            nx_px, ny_px = c_int(), c_int()
+            self._get_detector(nx_px, ny_px)
+            self._det_width, self._det_height = nx_px.value, ny_px.value
+            xsizeC,ysizeC = c_float(), c_float()
+            self._get_pixel_size(xsizeC,ysizeC)
+            self._xsize,self._ysize = xsizeC.value,ysizeC.value # in microns
+            self.set_read_mode(self._read_mode)
+            self._set_acquisition_mode(self._acquisition_mode)
+            self._set_trigger_mode(self._trigger_mode)
+            self._set_exposuretime(self._exposure)
+            self._set_cooler(self._cooler_on)
+            self._set_temperature(self._temperature_setpoint)
+            self.connected=True
+        except Exception as e:
+            self.log.warning(f'Unable to connect to Camera, restart du401a module to retry: {e}')
+            self.connected=False
 
     def on_deactivate(self):
         """ Deinitialisation performed during deactivation of the module.
@@ -178,6 +183,7 @@ class DU401A(CameraInterface):
         if self._has_shutter:
             self._set_shutter(0, 0, 0.1, 0.1)
         self._shut_down()
+        self.connected=False
 
     def get_name(self):
         """ Retrieve an identifier of the camera that the GUI can print
