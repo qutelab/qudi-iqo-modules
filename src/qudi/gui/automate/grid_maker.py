@@ -6,6 +6,8 @@ from PySide6 import QtCore
 import pyqtgraph as pg
 from qudi.util.widgets.scientific_spinbox import ScienDSpinBox
 
+import os
+from pyqtgraph.exporters import ImageExporter, SVGExporter
 
 class GridApp(qw.QWidget):
     
@@ -130,8 +132,12 @@ class GridApp(qw.QWidget):
         inputLayout.addWidget(self.btn_c2,1,3)
         inputLayout.addWidget(self.btn_c3,2,3)
         
-        self.btn_update = qw.QPushButton("Update Grid")
-        inputLayout.addWidget(self.btn_update,5,0)
+        self.btn_make_grid = qw.QPushButton("Make grid")
+        inputLayout.addWidget(self.btn_make_grid,5,0)
+        self.btn_clear = qw.QPushButton("Clear grid")
+        inputLayout.addWidget(self.btn_clear,5,1)
+        self.btn_clear_prog = qw.QPushButton("Clear progress")
+        inputLayout.addWidget(self.btn_clear_prog,5,2)
 
         self.btn_select = qw.QPushButton("Select Points")
         self.btn_select.setCheckable(True)
@@ -144,13 +150,15 @@ class GridApp(qw.QWidget):
         inputLayout.addWidget(self.btn_add_manual,7,0)
 
         # Connections
-        self.btn_update.clicked.connect(self.update_grid)
+        self.btn_make_grid.clicked.connect(self.make_grid)
         self.btn_c1.clicked.connect(lambda: self.set_pick_mode(1))
         self.btn_c2.clicked.connect(lambda: self.set_pick_mode(2))
         self.btn_c3.clicked.connect(lambda: self.set_pick_mode(3))
         self.btn_select.toggled.connect(self.toggle_select_mode)
         self.btn_delete_selected.clicked.connect(self.delete_selected)
         self.btn_add_manual.toggled.connect(self.toggle_add_manual_mode)
+        self.btn_clear.clicked.connect(lambda: self.update_grid(None))
+        self.btn_clear_prog.clicked.connect(lambda: self.update_done(None,None))
 
         #Defaults
         self.grid=None
@@ -369,7 +377,7 @@ class GridApp(qw.QWidget):
                 self._drag_rect_item = None
     
     
-    def update_grid(self):
+    def make_grid(self):
         try:
             c1 = np.array([(self.corners[0][0].value()), (self.corners[0][1].value())])
             c2 = np.array([(self.corners[1][0].value()), (self.corners[1][1].value())])
@@ -401,6 +409,12 @@ class GridApp(qw.QWidget):
         except Exception as e:
             print("Error:", e)
 
+    def update_grid(self,data=None):
+        if data is None:
+            self.scatter.setData([])
+        else:
+            self.scatter.setData(*np.array(data).T)
+
     @QtCore.Slot()
     def update_done(self,data=None,currentPoint=None):
         if data is not None:
@@ -412,3 +426,30 @@ class GridApp(qw.QWidget):
         else:
             self.scatter_current.setData([])
 
+
+    def save_plot(self, filepath):
+        """ Save the current plot (image + grid points) to a file.
+
+        The format is chosen from the file extension (e.g. .png, .jpg, .svg).
+        The crosshair lines are hidden during export.
+        """
+        filepath = str(filepath)
+        ext = os.path.splitext(filepath)[1].lower()
+        if not ext:
+            filepath += '.png'
+            ext = '.png'
+
+        # Don't include the mouse crosshair in the saved file
+        self.vLine.hide()
+        self.hLine.hide()
+        try:
+            if ext == '.svg':
+                exporter = SVGExporter(self.plot.plotItem)
+            else:
+                exporter = ImageExporter(self.plot.plotItem)
+                exporter.parameters()['width'] = 1600  # output width in pixels
+            exporter.export(filepath)
+        finally:
+            self.vLine.show()
+            self.hLine.show()
+        return filepath

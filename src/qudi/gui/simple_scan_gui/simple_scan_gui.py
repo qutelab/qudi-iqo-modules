@@ -193,6 +193,7 @@ class SimpleScanGui(GuiBase):
                 self._mw.plot_widget.x_channel_index,
                 self._mw.plot_widget.y_channel_index)
         )
+        self._mw.plot_widget.fit_clear_button.clicked.connect(self._simple_scan_logic().clear_all_fits)
 
     def __disconnect_control_signals(self):
         self._mw.action_toggle_scan.triggered[bool].disconnect(self._toggle_scan_clicked)
@@ -209,6 +210,7 @@ class SimpleScanGui(GuiBase):
         self._mw.plot_widget.y_channel_combo.currentIndexChanged.disconnect()
         self._mw.plot_widget._normalize_checkbox.stateChanged.disconnect()
         self._mw.plot_widget.fit_button.clicked.disconnect()
+        self._mw.plot_widget.fit_clear_button.clicked.disconnect()
 
     def __connect_logic_signals(self):
         logic = self._simple_scan_logic()

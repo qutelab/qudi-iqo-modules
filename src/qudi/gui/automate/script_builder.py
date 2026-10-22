@@ -762,6 +762,7 @@ class ScriptBuilder(QMainWindow):
         else:
             self._coordinate_list = [coordI+[self._initial_z] for coordI in self.coordinate_list]
             self._coord_labels = self.coordinate_list_CR
+            self.grid_maker.save_plot(f"{self.folder_path}/plot_{time.strftime('%Y%m%d_%H%M%S', time.localtime())}.png")
 
         self._refresh_script_order()
         self._set_running(True)

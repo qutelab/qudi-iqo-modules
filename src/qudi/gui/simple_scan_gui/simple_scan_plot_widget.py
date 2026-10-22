@@ -93,6 +93,8 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         fit_layout.addWidget(self.fit_button)
         self.fit_model_select = QtWidgets.QComboBox()
         fit_layout.addWidget(self.fit_model_select)
+        self.fit_clear_button = QtWidgets.QPushButton('Clear fit')
+        fit_layout.addWidget(self.fit_clear_button)
         fit_layout.addStretch()
 
         # ── 2-D raw scan image ────────────────────────────────────────────────

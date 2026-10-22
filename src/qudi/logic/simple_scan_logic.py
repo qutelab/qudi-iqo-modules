@@ -402,24 +402,29 @@ class SimpleScanLogic(LogicBase):
         def enable_daq_internal_clock(self): #Ensure enable clock enabled for non-gated/pulsed measurements.
             self._data_scanner().set_external_clock(False,False,False)
 
-        if self._laser().has_power_control:
-            laserX = self._laser().set_power
-        else:
-            laserX = self._laser().set_current
-        self.laserScanner = self.ScanDevice('Laser',
-                laserX,
-                #lambda : self._laser().get_power(),
-                data_labels=['Set Power'], # x, y1, y2,...
-                data_units=['%'],
-                static_read_parameters={},
-                static_set_parameters={}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
-                start_function=lambda : (enable_daq_internal_clock(self)),
-                end_function=None,
-                dependencies=['_laser'],
-                parent = self
-        )
-        if self._powermeter.is_connected and self._powermeter().connected:
-            self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
+        if self._laser.is_connected:
+            if self._laser().has_power_control:
+                laserX = self._laser().set_power
+                laserXlabel='Set Power'
+                laserXunit='W'
+            else:
+                laserX = self._laser().set_current
+                laserXlabel='Set Current'
+                laserXunit=''
+            self.laserScanner = self.ScanDevice('Laser',
+                    laserX,
+                    #lambda : self._laser().get_power(),
+                    data_labels=[laserXlabel], # x, y1, y2,...
+                    data_units=[laserXunit],
+                    static_read_parameters={},
+                    static_set_parameters={}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
+                    start_function=lambda : (enable_daq_internal_clock(self)),
+                    end_function=None,
+                    dependencies=['_laser'],
+                    parent = self
+            )
+            if self._powermeter.is_connected and self._powermeter().connected:
+                self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
         
         #This ODMR version just scans frequency manually in CW mode.
 
@@ -906,6 +911,33 @@ class SimpleScanLogic(LogicBase):
             self._signal_data = np.mean(data[mask_incomplete], axis=0)
         else:
             self._signal_data = np.full((data.shape[1], data.shape[2]), np.nan)
+
+    @QtCore.Slot(str, str, int)
+    def do_fit(self, fit_config, xidx, yidx):
+        """
+        Execute the currently configured fit on the measurement data. Optionally on passed data
+        """
+        if fit_config != 'No Fit' and fit_config not in self._fit_config_model.configuration_names:
+            self.log.error(f'Unknown fit configuration "{fit_config}" encountered.')
+            return
+
+        if self.signal_data is None:
+            return
+        
+        signal_x_data = self._signal_data[:,xidx]
+        signal_y_data = self._signal_data[:,yidx]
+
+        try:
+            fit_config, fit_result = self._fit_container.fit_data(fit_config, signal_x_data, signal_y_data)
+        except Exception as e:
+            self.log.exception(f'Data fitting failed: {e}')
+            self._fit_results[f'{xidx}-{yidx}'] = None
+
+        if fit_result is not None:
+            self._fit_results[f'{xidx}-{yidx}'] = (fit_config, fit_result)
+        else:
+            self._fit_results[f'{xidx}-{yidx}'] = None
+        self.sigFitUpdated.emit(self._fit_results, xidx, yidx)
     
     @QtCore.Slot(str)
     def save_data(self, tag=None, root_dir=None, metadata=None):
@@ -1082,32 +1114,6 @@ class SimpleScanLogic(LogicBase):
         return fig
     
 
-    @QtCore.Slot(str, str, int)
-    def do_fit(self, fit_config, xidx, yidx):
-        """
-        Execute the currently configured fit on the measurement data. Optionally on passed data
-        """
-        if fit_config != 'No Fit' and fit_config not in self._fit_config_model.configuration_names:
-            self.log.error(f'Unknown fit configuration "{fit_config}" encountered.')
-            return
-
-        if self.signal_data is None:
-            return
-        
-        signal_x_data = self._signal_data[:,xidx]
-        signal_y_data = self._signal_data[:,yidx]
-
-        try:
-            fit_config, fit_result = self._fit_container.fit_data(fit_config, signal_x_data, signal_y_data)
-        except Exception as e:
-            self.log.exception(f'Data fitting failed: {e}')
-            self._fit_results[f'{xidx}-{yidx}'] = None
-
-        if fit_result is not None:
-            self._fit_results[f'{xidx}-{yidx}'] = (fit_config, fit_result)
-        else:
-            self._fit_results[f'{xidx}-{yidx}'] = None
-        self.sigFitUpdated.emit(self._fit_results, xidx, yidx)
 
 
 
