@@ -34,10 +34,10 @@ from qudi.interface.process_control_interface import ProcessValueInterface, Proc
 class PM100D(ProcessValueInterface):
     """
     Thin SCPI wrapper around a Thorlabs PM100D + power sensor.
-       Example config:
+    Example config:
     
-        powermeter:
-            module.Class: 'powermeter.pm100d.PM100D'
+    powermeter:
+        module.Class: 'powermeter.pm100d.PM100D'
         
     
     """
@@ -84,7 +84,7 @@ class PM100D(ProcessValueInterface):
             self.connected=True
         except Exception as e:
             self.connected=False
-            raise e
+            self.log.warning(f'Unable to connect to PM100D, please reload module pm100d to retry: {e}')
         
     def on_deactivate(self):
         if self.connected:

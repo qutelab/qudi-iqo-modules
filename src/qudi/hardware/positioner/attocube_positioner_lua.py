@@ -68,55 +68,61 @@ class AttocubeANC300(PositionerInterface):
     def on_activate(self):
         """ Activate module.
         """
-        rm = pyvisa.ResourceManager()
+        try:
+            rm = pyvisa.ResourceManager()
 
-        # Replace with your device's actual IP address and raw socket port
-        # Common raw socket ports for instruments include 5025 or 5024
+            # Replace with your device's actual IP address and raw socket port
+            # Common raw socket ports for instruments include 5025 or 5024
 
-        # Open the connection using the SOCKET resource string
-        resource_string = f"TCPIP0::{self._ip_address}::{self._port}::SOCKET"
-        self._anc300 = rm.open_resource(resource_string)
+            # Open the connection using the SOCKET resource string
+            resource_string = f"TCPIP0::{self._ip_address}::{self._port}::SOCKET"
+            self._anc300 = rm.open_resource(resource_string)
 
-        # CRITICAL: Socket connections require explicit termination characters
-        self._anc300.read_termination = self.EOLR
-        self._anc300.write_termination = self.EOL
+            # CRITICAL: Socket connections require explicit termination characters
+            self._anc300.read_termination = self.EOLR
+            self._anc300.write_termination = self.EOL
 
-        # Readout startup lines
-        self._anc300.read_raw()  #Discard first line that has binary
-        self._flush_input()
-        
-        ret = self._query(self._password)
-        if "success" not in ret.lower():
-            raise Exception(ret)
+            # Readout startup lines
+            self._anc300.read_raw()  #Discard first line that has binary
+            self._flush_input()
+            
+            ret = self._query(self._password)
+            if "success" not in ret.lower():
+                raise Exception(ret)
 
-        # Check for available axes
-        self._available_axes = []
-        for ii in range(1,9):
-            try:
-                ret = self._queryP(f'm{ii}.serial')
-                self._available_axes.append(ii)
-            except:
-                continue
-        self._available_axes = set(self._available_axes)
+            # Check for available axes
+            self._available_axes = []
+            for ii in range(1,9):
+                try:
+                    ret = self._queryP(f'm{ii}.serial')
+                    self._available_axes.append(ii)
+                except:
+                    continue
+            self._available_axes = set(self._available_axes)
 
-        self._axis_dict = dict(self._axis_dict)
-        axis_dict_new = {}
-        for label, axis in self._axis_dict.items():
-            if axis not in self._available_axes:
-                self.log.warning(f"Axis {label} (slot {axis}) is not available on the device. Removing from axis_dict.")
-            else:
-                axis_dict_new[label] = axis
-        for axis in self._available_axes:
-            if axis not in self._axis_dict.values():
-                axis_dict_new[str(axis)] = axis
-        self._axis_dict = axis_dict_new
-        self._axis_dict_rev = {v: k for k, v in self._axis_dict.items()}
+            self._axis_dict = dict(self._axis_dict)
+            axis_dict_new = {}
+            for label, axis in self._axis_dict.items():
+                if axis not in self._available_axes:
+                    self.log.warning(f"Axis {label} (slot {axis}) is not available on the device. Removing from axis_dict.")
+                else:
+                    axis_dict_new[label] = axis
+            for axis in self._available_axes:
+                if axis not in self._axis_dict.values():
+                    axis_dict_new[str(axis)] = axis
+            self._axis_dict = axis_dict_new
+            self._axis_dict_rev = {v: k for k, v in self._axis_dict.items()}
+            self.connected=True
+        except Exception as e:
+            self.log.warning(f'Unable to connect to ANC300, please restart attocube_positioner_lua to retry: {e}')
+            self.connected=False
 
 
     def on_deactivate(self):
         """ Deactivate module.
         """
-        self._anc300.close()
+        if self.connected:
+            self._anc300.close()
 
     @property
     def axis_names(self):

@@ -24,6 +24,7 @@ from qudi.logic.scanning_optimize_logic import ScanningOptimizeLogic
 from qudi.logic.scanning_data_logic import ScanningDataLogic
 from qudi.logic.spectrometer_logic import SpectrometerLogic
 from qudi.logic.simple_scan_logic import SimpleScanLogic
+from qudi.logic.positioner_logic import PositionerLogic
 
 
 import importlib
@@ -337,6 +338,43 @@ class FunctionCatalog(QtCore.QObject):
             else:
                 self.sigFuncComplete.emit(f"Scan failed")
 
+    @register(dep='positioner_logic', params={
+        "axis": {"type": [str], "entries": lambda ctx: ctx.positioner_logic().axis_names}, #"default": lambda ctx: ctx.positioner_logic().axis_names[0]
+        "direction": {"type": [str], "entries": ['Up','Down']} ,
+        "number_steps": {"type": int, "default": 0},
+        "frequency": {"type": int, "default": 25},
+        "step_voltage": {"type": float, "default": 25},
+        "offset_voltage":{"type": float, "default": 0},
+    })
+    def positioner(self, axis,direction,number_steps,frequency,step_voltage,offset_voltage):
+        self.positioner_logic().set_offset_voltage(axis, offset_voltage)
+        if number_steps>0:
+            self.positioner_logic().sigActivityChanged.connect(self.finish_positioner, Qt.QueuedConnection)
+            self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection) 
+            self.positioner_logic().set_step_voltage(axis,step_voltage)
+            self.positioner_logic().set_step_freq(axis,frequency)
+            if direction=='Up':
+                self.positioner_logic().step_up(axis,number_steps)
+            else:
+                self.positioner_logic().step_down(axis,number_steps)
+        else:
+            self.finish_positioner()
+
+    def finish_positioner(self, axis=None, state=None, interrupted=False):
+        with self._finish_lock:
+            if state:
+                return  #Move not complete
+            try:
+                self._sigInterrupt.disconnect()
+                self.positioner_logic().sigActivityChanged.disconnect(self.finish_positioner)
+            except: 
+                pass
+            if interrupted:
+                self.positioner_logic().stop()
+                return
+            self.sigFuncComplete.emit(f"Done positioner")
+            
+
     
     @register(dep='picoharp', params={
         "max_time": {"type": int, "default": lambda ctx: 30000},
@@ -386,6 +424,8 @@ class FunctionCatalog(QtCore.QObject):
         else:  #Otherwise, we're done with the loop, pop it from the list and continue
             self._loop_list.pop()
             self.sigFuncComplete.emit(f"Finished loop of {loop[0]} iterations")
+
+    ### TODO: scanner_gui, x,y, and/or z scans
         
 
 # ---------------------- PARAMETER DIALOG ----------------------
@@ -428,10 +468,11 @@ class ParamDialog(QDialog):
                 if spec['type'] == int:
                     widget = QSpinBox()
                     widget.setMaximum(99999999)  #SpinBoxes typically max at 99
+                    widget.setValue(val)
                 else:
                     widget = ScienDSpinBox()
-                    #widget.setDecimals(6)
-                widget.setValue(val)
+                    widget.setDecimals(9)
+                    widget.setValue(val)
             widget.setMinimumWidth(200)
 
             layout.addRow(QLabel(name), widget)
@@ -466,7 +507,8 @@ class ScriptBuilderGUI(GuiBase):
         'scanning_logic': ('scanning_probe_logic', ScanningProbeLogic),
         'scanning_data_logic': ('scanning_data_logic', ScanningDataLogic),
         'spectrometer_logic': ('spectrometer_logic', SpectrometerLogic),
-        'simple_scan_logic': ('simple_scan_logic', SimpleScanLogic)
+        'simple_scan_logic': ('simple_scan_logic', SimpleScanLogic),
+        'positioner_logic': ('positioner_logic', PositionerLogic),
     }
     for var_name, (logic_module,interface) in _logic_dict.items():
         locals()[var_name] = Connector(interface=interface,optional=True)
@@ -638,8 +680,6 @@ class ScriptBuilder(QMainWindow):
         self.stop_btn.setEnabled(state)
         self.save_btn.setEnabled(not state)
         self.load_btn.setEnabled(not state)
-        
-
 
     def _refresh_script_order(self):
         self.script = [self.script_list.item(i).data(Qt.UserRole) for i in range(self.script_list.count())]
@@ -813,12 +853,17 @@ class ScriptBuilder(QMainWindow):
                 self.log_result(f'{self._current_coord_idx+1}/{len(self._coordinate_list)} Moved to : {coords}')
         except Exception as e:
             self.finish_script(error=e)
+            return
         
         self.script_list.setCurrentRow(self._current_script_idx)
         QApplication.processEvents()
         entry = self.script[self._current_script_idx]
         self.log_result(f'Starting script step: {entry}')
-        self.catalog.call(entry, coord_label=self._coord_labels[self._current_coord_idx])
+        try:
+            self.catalog.call(entry, coord_label=self._coord_labels[self._current_coord_idx])
+        except Exception as e:
+            self.finish_script(error=e)
+            return
         self._current_script_idx += 1
         if self._current_script_idx >= len(self.script):
             self._current_script_idx = 0
@@ -841,7 +886,7 @@ class ScriptBuilder(QMainWindow):
         elif error is not None:
             self.catalog.finish(True)
             self.log_result(f"Script execution failed due to error: {error}")
-            QMessageBox.information(self, f"Script execution failed due to error:", "{error}")
+            QMessageBox.information(self, "Script error", f"Script execution failed due to error:\n{error}")
         else:
             self.catalog.finish(False)
             self.log_result("Script execution complete")
