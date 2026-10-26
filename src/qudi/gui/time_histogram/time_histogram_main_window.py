@@ -78,6 +78,18 @@ class TimeHistogramControlDockWidget(AdvancedDockWidget):
         layout.addWidget(self.channel_list_widget)
         self._channel_checkboxes = {}
 
+        ratio_layout = QtWidgets.QHBoxLayout()
+        ratio_layout.addWidget(QtWidgets.QLabel('Ratio'))
+        self.ratio_numer_combo = QtWidgets.QComboBox()
+        ratio_layout.addWidget(self.ratio_numer_combo)
+        self.ratio_denom_combo = QtWidgets.QComboBox()
+        ratio_layout.addWidget(self.ratio_denom_combo)
+        self.ratio_add_button = QtWidgets.QPushButton('+')
+        ratio_layout.addWidget(self.ratio_add_button)
+        self.ratio_clear_button = QtWidgets.QPushButton('x')
+        ratio_layout.addWidget(self.ratio_clear_button)
+        layout.addLayout(ratio_layout)
+
         # ── Settings form ─────────────────────────────────────────────────────
         form = QtWidgets.QFormLayout()
         form.setVerticalSpacing(6)
@@ -138,7 +150,7 @@ class TimeHistogramControlDockWidget(AdvancedDockWidget):
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def set_available_channels(self, available_channels, active_channels):
+    def set_available_channels(self, available_channels=None, active_channels=None):
         """ (Re-)populate the channel checkbox list. """
         self.channel_list_widget.clear()
         self._channel_checkboxes.clear()
@@ -149,6 +161,18 @@ class TimeHistogramControlDockWidget(AdvancedDockWidget):
             checkbox.toggled.connect(self._emit_active_channels)
             self.channel_list_widget.setItemWidget(item, checkbox)
             self._channel_checkboxes[channel] = checkbox
+        self.ratio_numer_combo.clear()
+        self.ratio_denom_combo.clear()
+        self.ratio_numer_combo.addItem('None')
+        self.ratio_denom_combo.addItem('None')
+        self.ratio_numer_combo.addItems([x for x in available_channels if '/' not in x])
+        self.ratio_denom_combo.addItems([x for x in available_channels if '/' not in x])
+
+    def set_active_channels(self,active_channels):
+        for channel, cbox in self._channel_checkboxes.items():
+            cbox.blockSignals(True)
+            cbox.setChecked(channel in active_channels)
+            cbox.blockSignals(False)
 
     def _emit_active_channels(self):
         channels = [ch for ch, cb in self._channel_checkboxes.items() if cb.isChecked()]

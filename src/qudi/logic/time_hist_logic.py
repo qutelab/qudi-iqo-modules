@@ -77,6 +77,7 @@ class TimeHistLogic(LogicBase):
         self._thread_lock = RecursiveMutex()
         self._scan_active = False
         self.data = {}
+        self._ratio_channels = []
 
     def on_activate(self):
         hardware = self._data_scanner()
@@ -108,7 +109,7 @@ class TimeHistLogic(LogicBase):
         if not channels:
             channels = available
         else:
-            channels = [ch for ch in channels if ch in available]
+            channels = [ch for ch in channels if ch in available+['Ratio']]
             if not channels:
                 channels = available
         try:
@@ -130,7 +131,7 @@ class TimeHistLogic(LogicBase):
 
     @property
     def active_channels(self):
-        return list(self._data_scanner().active_channels)
+        return list(self._data_scanner().active_channels) + self._ratio_channels
 
     @property
     def sample_rate(self):
@@ -157,7 +158,13 @@ class TimeHistLogic(LogicBase):
             assert not self.acquisition_running, \
                 'Unable to change active channels while acquisition is running.'
             try:
-                self._data_scanner().set_active_channels(channels)
+                channels_scanner = []
+                for chI in channels:
+                    if '/' in chI:
+                        channels_scanner += chI.split('/')
+                    else:
+                        channels_scanner += [chI]
+                self._data_scanner().set_active_channels(list(set(channels_scanner)))
             except Exception as e:
                 self.log.error(f'Unable to set active channels: {e}')
                 return self.active_channels
@@ -202,6 +209,25 @@ class TimeHistLogic(LogicBase):
             self._data_scanner()._buffer_size = value
             self._buffer_size = value
             self.sigSettingsUpdated.emit({'buffer_size': value})
+
+    def add_ratio_channel(self,numer,denom):
+        '''
+        Add channels to be plotted as ratio. 
+        '''
+        with self._thread_lock:
+            if (numer not in self.available_channels) or (denom not in self.available_channels):
+                raise ValueError(f'A channel requested is not available: {numer,denom}')
+            self._ratio_channels += [f'{numer}/{denom}']
+            self.set_active_channels
+            self.sigSettingsUpdated.emit({'available_channels':self.available_channels+self._ratio_channels,
+                                          'active_channels': self.active_channels})
+
+    def clear_ratio_channels(self):
+        with self._thread_lock:
+            self._ratio_channels = []
+            self.sigSettingsUpdated.emit({'available_channels':self.available_channels+self._ratio_channels,
+                                            'active_channels': self.active_channels})
+            
 
     @QtCore.Slot()
     def start_acquisition(self):
@@ -257,6 +283,11 @@ class TimeHistLogic(LogicBase):
             data = self._data_scanner().acquire_sample()
             if data is not None:
                 self.data = data
+                for rcI in self._ratio_channels:
+                    if rcI in self.active_channels:
+                        numer,denom = rcI.split('/')
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            self.data[rcI] = (self.data[numer][0], self.data[numer][1]/self.data[denom][1])
                 self.sigDataAvailable.emit(self.data)
             else:
                 self.log.error('Acquisition error, stopping acquisition')

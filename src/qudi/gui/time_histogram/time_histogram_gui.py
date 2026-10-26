@@ -70,7 +70,7 @@ class TimeHistogramGui(GuiBase):
 
         logic = self._time_hist_logic()
 
-        available_channels = logic.available_channels
+        available_channels = logic.available_channels + logic._ratio_channels
         active_channels = logic.active_channels
         self._mw.control_dockwidget.set_available_channels(available_channels, active_channels)
         self._mw.set_channels(active_channels)
@@ -162,6 +162,12 @@ class TimeHistogramGui(GuiBase):
         dw.sigActiveChannelsChanged.connect(
             self._active_channels_changed, QtCore.Qt.ConnectionType.QueuedConnection
         )
+        dw.ratio_add_button.clicked.connect(
+            self._add_ratio_channel, QtCore.Qt.ConnectionType.QueuedConnection
+        )
+        dw.ratio_clear_button.clicked.connect(
+            self._time_hist_logic().clear_ratio_channels, QtCore.Qt.ConnectionType.QueuedConnection
+        )
         dw.sigSampleRateChanged.connect(
             self._sample_rate_changed, QtCore.Qt.ConnectionType.QueuedConnection
         )
@@ -185,6 +191,8 @@ class TimeHistogramGui(GuiBase):
 
         dw = self._mw.control_dockwidget
         dw.sigActiveChannelsChanged.disconnect(self._active_channels_changed)
+        dw.ratio_add_button.clicked.disconnect(self._add_ratio_channel)
+        dw.ratio_clear_button.clicked.disconnect(self._time_hist_logic().clear_ratio_channels)
         dw.sigSampleRateChanged.disconnect(self._sample_rate_changed)
         dw.sigSamplingTimeChanged.disconnect(self._sampling_time_changed)
         dw.sigDownsampleChanged.disconnect(self._downsample_changed)
@@ -232,8 +240,9 @@ class TimeHistogramGui(GuiBase):
 
     @QtCore.Slot(list)
     def _active_channels_changed(self, channels):
-        self._sigActiveChannelsChanged.emit(channels)
         self._mw.set_channels(channels)
+        self._sigActiveChannelsChanged.emit(channels)
+        
 
     @QtCore.Slot(str)
     def _sample_rate_changed(self, value):
@@ -250,6 +259,12 @@ class TimeHistogramGui(GuiBase):
     @QtCore.Slot(int)
     def _buffer_size_changed(self, value):
         self._sigBufferSizeChanged.emit(value)
+
+    @QtCore.Slot()
+    def _add_ratio_channel(self):
+        numer, denom = self._mw.control_dockwidget.ratio_numer_combo.currentText(), self._mw.control_dockwidget.ratio_denom_combo.currentText()
+        if (numer!='None') and (denom!='None'):
+            self._time_hist_logic().add_ratio_channel(numer,denom)
 
     # ── Logic → GUI update slots ──────────────────────────────────────────────
 
@@ -275,9 +290,9 @@ class TimeHistogramGui(GuiBase):
     def _update_settings(self, settings):
         """Reflect setting changes emitted by the logic."""
         self._mw.control_dockwidget.set_settings(settings)
-        if 'active_channels' in settings:
-            logic = self._time_hist_logic()
-            self._mw.control_dockwidget.set_available_channels(
-                logic.available_channels, settings['active_channels']
-            )
+        if 'available_channels' in settings:
+            self._mw.control_dockwidget.set_available_channels(settings['available_channels'], settings['active_channels'])
+            self._mw.set_channels(settings['active_channels'])
+        elif 'active_channels' in settings:
+            self._mw.control_dockwidget.set_active_channels(settings['active_channels'])  #logic.available_channels,
             self._mw.set_channels(settings['active_channels'])

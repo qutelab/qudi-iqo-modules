@@ -605,9 +605,10 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
             if len(chan.split('-'))>1:
                 trigger_source = chan.split('-')[1]
-                chan = chan.split('-')[0]
+                term_chan = chan.split('-')[0]
             else:
                 trigger_source = self.trigger_source
+                term_chan = chan
             # Try to find available counter
             for ctr in self.__all_counters:
                 ctr_name = self._term_path(ctr)
@@ -627,7 +628,7 @@ class NIXSeriesPulseTimingInput(PulseTimeHistogramInterface):
 
                     task.timing.cfg_samp_clk_timing(
                         rate=10_000_000,
-                        source=self._term_path(chan),
+                        source=self._term_path(term_chan),
                         sample_mode=ni.constants.AcquisitionType.CONTINUOUS,
                         active_edge=self._trigger_edge
                     )
