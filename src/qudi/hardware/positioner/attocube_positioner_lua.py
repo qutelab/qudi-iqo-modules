@@ -176,7 +176,7 @@ class AttocubeANC300(PositionerInterface):
         if "ERROR" in ret:
             raise Exception(ret)
         else:
-            return ret
+            return ret.strip()
 
     def _queryP(self,request):
         '''
@@ -215,7 +215,8 @@ class AttocubeANC300(PositionerInterface):
             raise ValueError(f"Invalid value for ACIN: {value}. Must be 'ON' or 'OFF', or bool.")
 
         axis = self._validate_axis(axis)
-        return self._set_and_check(f'm{axis}.acin', value)
+        ret = self._set_and_check(f'm{axis}.acin', value)
+        return ['OFF','ON'][int(ret)]
 
     def get_acin(self,axis):
         """ Get the ACIN value for a given axis, ON or OFF, or bool. """
@@ -231,7 +232,8 @@ class AttocubeANC300(PositionerInterface):
             raise ValueError(f"Invalid value for DCIN: {value}. Must be 'ON' or 'OFF', or bool.")
 
         axis = self._validate_axis(axis)
-        return self._set_and_check(f'm{axis}.dcin', value)
+        ret = self._set_and_check(f'm{axis}.dcin', value)
+        return ['OFF','ON'][int(ret)]
 
     def get_dcin(self,axis):
         """ Get the DCIN value for a given axis, ON or OFF, or bool. """
@@ -378,19 +380,19 @@ class AttocubeANC300(PositionerInterface):
         """ Get the step frequency limit value"""
         axis = self._validate_axis(axis)
         ret = self._queryP(f'm{axis}.frqlimit')
-        return bool(ret)
+        return float(ret)
 
     def get_step_voltage_limit(self,axis):
         """ Get the step voltage limit value"""
         axis = self._validate_axis(axis)
         ret = self._queryP(f'm{axis}.stplimit')
-        return bool(ret)
+        return float(ret)
 
     def get_output_voltage_limit(self,axis):
         """ Get the output voltage limit value"""
         axis = self._validate_axis(axis)
         ret = self._queryP(f'm{axis}.outlimit')
-        return bool(ret)
+        return float(ret)
 
     def trigger_up(self,axis,value):
         """ Trigger input up for a given axis, value in range 1-7 """

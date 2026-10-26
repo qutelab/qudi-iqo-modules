@@ -140,22 +140,26 @@ class PositionerLogic(LogicBase):
     def set_acin(self, axis, value):
         with self._thread_lock:
             value = self._positioner().set_acin(axis, value)
-        self.sigValuesUpdated.emit(axis, {'acin': value})
+            mode = self._positioner().get_mode(axis)  #Mode changes with setting acin
+        self.sigValuesUpdated.emit(axis, {'acin': value, 'mode': mode})
 
     @QtCore.Slot(str, bool)
     def set_dcin(self, axis, value):
         with self._thread_lock:
             value = self._positioner().set_dcin(axis, value)
-        self.sigValuesUpdated.emit(axis, {'dcin': value})
+            mode = self._positioner().get_mode(axis)  #Mode changes with setting acin
+        self.sigValuesUpdated.emit(axis, {'dcin': value, 'mode': mode})
 
     @QtCore.Slot(str, str)
     def set_mode(self, axis, value):
         if 'cap' in value.lower():
-            self.measure_capacitance()
+            self.measure_capacitance(axis)
         else:
             with self._thread_lock:
                 value = self._positioner().set_mode(axis, value)
-            self.sigValuesUpdated.emit(axis, {'mode': value})
+                dcin = self._positioner().get_dcin(axis)
+                acin = self._positioner().get_acin(axis)
+            self.sigValuesUpdated.emit(axis, {'mode': value, 'dcin': dcin, 'acin': acin,})
 
     @QtCore.Slot(str, object)  #Accepts int or float
     def set_filt(self, axis, value):
@@ -202,15 +206,15 @@ class PositionerLogic(LogicBase):
             self._positioner().set_mode(axis, 'CAP')
             for ii in range(20):
                 sleep(0.2)
-                if self._positioner.get_mode(axis)=='GND':
+                if self._positioner().get_mode(axis)=='GND':
                     break
                 if ii==19:
                     self.log.warning('measure_capacitance timed out')
             new_values = {
-                'mode': self._positioner.get_mode(axis),
-                'cap': self._positioner.get_cap(axis),
+                'mode': self._positioner().get_mode(axis),
+                'cap': self._positioner().get_cap(axis),
             }
-        self.sigValuesUpdated(axis,new_values)
+        self.sigValuesUpdated.emit(axis,new_values)
         return new_values['cap']
 
 
