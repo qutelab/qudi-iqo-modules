@@ -503,7 +503,7 @@ class SimpleScanLogic(LogicBase):
                 dependencies=['_awg','_microwave'],
                 parent = self
         )
-        self.pulsedRabiScanner = self.ScanDevice('Rabi',
+        self.timedOdmrScanner = self.ScanDevice('Timed ODMR',
             lambda x: self._awg().set_variable_time(x),
             lambda : _pulsed_ODMR_getY(self),
             data_labels=['Time','Ratio'], # x, y1, y2,...

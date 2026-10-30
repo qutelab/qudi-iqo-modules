@@ -343,12 +343,14 @@ class SimpleAWGLogic(LogicBase):
                     block_name=None
 
                 if current_block[0] == "Variable Pulses":
-                    # used_pulse_blocks.append(current_block)
-                    if current_block[1] == self.selected_param:
-                        current_block[1] = variable_time
-                    if current_block[2] == self.selected_param:
-                        current_block[2] = variable_time
-
+                    # T-tau steps: [pulse T, idle T] -> the variable field becomes T - tau
+                    t_tau = step.get("T-tau")
+                    for i in (1, 2):
+                        if current_block[i] == self.selected_param:
+                            if t_tau and t_tau[i - 1] is not None:
+                                current_block[i] = max(t_tau[i - 1] - variable_time, 0)
+                            else:
+                                current_block[i] = variable_time
                     if block_name is not None:
                         pulse_blocks[block_name] = current_block
             
