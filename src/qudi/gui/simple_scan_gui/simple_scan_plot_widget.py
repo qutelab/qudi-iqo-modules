@@ -408,11 +408,16 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
             # by the mean along axis 0 (across x points within each scan line).
             if self._normalize_checkbox.isChecked():
                 try:
-                    global_mean = np.nanmean(img)
-                    col_means = np.nanmean(img, axis=0, keepdims=True)
-                    with np.errstate(invalid='ignore', divide='ignore'):
-                        img = img * (global_mean / col_means)
-                except Exception:
+                    has_data = ~np.isnan(img).any(axis=0)  # use .all for live rescaling, .any if incomplete line not to be normalized.
+                    if has_data.any():
+                        global_mean = np.nanmean(img[:,has_data])
+                        col_means = np.full(img.shape[1],global_mean)
+                        col_means[has_data] = np.nanmean(img[:,has_data], axis=0)
+                        col_means = col_means.reshape((1,col_means.shape[0]))
+                        with np.errstate(invalid='ignore', divide='ignore'):
+                            img = img * (global_mean / col_means)
+                except Exception as e:
+                    self.log.warning(f'Line normalize error: {e}')
                     self._normalize_checkbox.setChecked(False)
 
             self._last_image_data = img

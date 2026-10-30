@@ -279,19 +279,19 @@ class FunctionCatalog(QtCore.QObject):
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
         "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
                         "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
-        "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedRabiScanner._static_set_parameters['RF Power'][1]},
-        "Frequency": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedRabiScanner._static_set_parameters['Frequency'][1]},
+        "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().timedOdmrScanner._static_set_parameters['RF Power'][1]},
+        "Frequency": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().timedOdmrScanner._static_set_parameters['Frequency'][1]},
     })
-    def record_Rabi_ODMR(self, t_start, t_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power, Frequency):
+    def record_Timed_ODMR(self, t_start, t_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power, Frequency):
         # Implementation of simple scan specifically using Pulsed ODMR to control its specific parameters.
-        self.simple_scan_logic().scan_device = 'Rabi'
+        self.simple_scan_logic().scan_device = 'Timed ODMR'
         self.simple_scan_logic().x_range = (t_start,t_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
         self.simple_scan_logic().number_scans = number_scans
         self.simple_scan_logic().scan_order = scan_order
-        self.simple_scan_logic().set_static_set_parameter_value('Rabi','RF Power', RF_power)
-        self.simple_scan_logic().set_static_set_parameter_value('Rabi','Frequency', Frequency)
+        self.simple_scan_logic().set_static_set_parameter_value('Timed ODMR','RF Power', RF_power)
+        self.simple_scan_logic().set_static_set_parameter_value('Timed ODMR','Frequency', Frequency)
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
@@ -790,8 +790,15 @@ class ScriptBuilder(QMainWindow):
             return
         
         if (self.folder_path is None) or (not os.path.isdir(self.folder_path)):
-            self.select_folder()
-            if self.folder_path is None:  #User cancelled folder selection
+            # self.select_folder()
+            # if self.folder_path is None:  #User cancelled folder selection
+            #     return
+            try:
+                self.folder_path = f'{self.parent.module_default_data_dir}/{time.strftime('%Y%m%d_%H%M%S', time.localtime())}'
+                self.catalog.folder_path = self.folder_path
+                os.makedirs(self.folder_path,exist_ok=True)
+            except:
+                self.log.error('Unable to make default folder, stopping script')
                 return
 
         self.logfile_path = f"{self.folder_path}/log_{time.strftime('%Y%m%d_%H%M%S', time.localtime())}.txt"
