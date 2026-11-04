@@ -1520,26 +1520,33 @@ class SimpleAWGGui(GuiBase):
         channel_widget = ChannelWidget(["IQ"] + self.available_channels)
         self.pulse_sequence_table.setCellWidget(row, 5, channel_widget)
 
-        reps = QSpinBox()
-        reps.setRange(1, 10000)
-        reps.setValue(1)
-        self.pulse_sequence_table.setCellWidget(row, 6, reps)
-
         start_after_step = QSpinBox()
         start_after_step.setRange(0, 9999)
         start_after_step.setValue(0)
-        self.pulse_sequence_table.setCellWidget(row, 7, start_after_step)
+        self.pulse_sequence_table.setCellWidget(row, 6, start_after_step)
+
+        loop_to = QSpinBox()
+        loop_to.setRange(0, 9999)
+        loop_to.setValue(0)
+        self.pulse_sequence_table.setCellWidget(row, 7, loop_to)
+
+        loop_n = QSpinBox()
+        loop_n.setRange(1, 10000)
+        loop_n.setValue(1)
+        self.pulse_sequence_table.setCellWidget(row, 8, loop_n)
 
         iq_phase = QDoubleSpinBox()
         iq_phase.setRange(-360, 360)
         iq_phase.setValue(0)
-        self.pulse_sequence_table.setCellWidget(row, 8, iq_phase)
+        self.pulse_sequence_table.setCellWidget(row, 9, iq_phase)
 
         self.pulse_sequence_table.resizeRowToContents(row)
 
         self._connect_pulse_sequence_row_dirty_signals(
-            pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase
+            pulse_time, idle_time, channel_widget, start_after_step, iq_phase
         )
+        loop_to.valueChanged.connect(self.mark_pulse_sequence_dirty)
+        loop_n.valueChanged.connect(self.mark_pulse_sequence_dirty)
         t_tau.toggled.connect(self.mark_pulse_sequence_dirty)
         self.mark_pulse_sequence_dirty()
 
@@ -1562,19 +1569,22 @@ class SimpleAWGGui(GuiBase):
             idle_var = self.pulse_sequence_table.cellWidget(row, 3).isChecked()
             t_tau = self.pulse_sequence_table.cellWidget(row, 4).isChecked()
             channels = self.pulse_sequence_table.cellWidget(row, 5).selected_channels()
-            reps = self.pulse_sequence_table.cellWidget(row, 6).value()
-            start_after_step = self.pulse_sequence_table.cellWidget(row, 7).value()
-            iq_phase = self.pulse_sequence_table.cellWidget(row, 8).value()
+            start_after_step = self.pulse_sequence_table.cellWidget(row, 6).value()
+            loop_to = self.pulse_sequence_table.cellWidget(row, 7).value()
+            loop_n = self.pulse_sequence_table.cellWidget(row, 8).value()
+            iq_phase = self.pulse_sequence_table.cellWidget(row, 9).value()
 
             if pulse_var or idle_var:
                 step = {
                     # inline block - no named pulse block or increments, matches PulseCompiler's "Pulses" format
                     "block": ["Variable Pulses", [pulse_time,'tau'][pulse_var], [idle_time,'tau'][idle_var], 0, 0],
                     "channels": channels,
-                    "repetitions": reps,
+                    "repetitions": 1,
                     "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
                     "Receive Trig": start_after_step,
-                    "IQ Phase": iq_phase
+                    "IQ Phase": iq_phase,
+                    "Loop To": loop_to,
+                    "Loop N": loop_n
                 }
                 if t_tau:
                     # [pulse T, idle T]: the entered time T replaces the variable, which becomes T - tau
@@ -1585,10 +1595,12 @@ class SimpleAWGGui(GuiBase):
                     # inline block - no named pulse block or increments, matches PulseCompiler's "Pulses" format
                     "block": ["Pulses", pulse_time, idle_time, 0, 0],
                     "channels": channels,
-                    "repetitions": reps,
+                    "repetitions": 1,
                     "Send Trig": row + 1, # each step's own step number, used as the trigger target for later steps
                     "Receive Trig": start_after_step,
-                    "IQ Phase": iq_phase
+                    "IQ Phase": iq_phase,
+                    "Loop To": loop_to,
+                    "Loop N": loop_n
                 })
 
         return sequence
@@ -1699,11 +1711,10 @@ class SimpleAWGGui(GuiBase):
         self._pulse_sequence_dirty = False
         self.pulse_sequence_modified_label.setText('')
 
-    def _connect_pulse_sequence_row_dirty_signals(self, pulse_time, idle_time, channel_widget, reps, start_after_step, iq_phase):
+    def _connect_pulse_sequence_row_dirty_signals(self, pulse_time, idle_time, channel_widget, start_after_step, iq_phase):
         """ Marks the pulse sequence dirty whenever any widget in a table row changes """
         pulse_time.valueChanged.connect(self.mark_pulse_sequence_dirty)
         idle_time.valueChanged.connect(self.mark_pulse_sequence_dirty)
-        reps.valueChanged.connect(self.mark_pulse_sequence_dirty)
         start_after_step.valueChanged.connect(self.mark_pulse_sequence_dirty)
         iq_phase.valueChanged.connect(self.mark_pulse_sequence_dirty)
         for checkbox in channel_widget.checkboxes.values():
@@ -1714,7 +1725,7 @@ class SimpleAWGGui(GuiBase):
         self.pulse_sequence_table.clear()
         self.pulse_sequence_table.setRowCount(0)
 
-        self.pulse_sequence_table.setColumnCount(9)
+        self.pulse_sequence_table.setColumnCount(10)
         self.pulse_sequence_table.setHorizontalHeaderLabels([
             "Pulse\nTime", 
             "Pulse\nVar", 
@@ -1722,9 +1733,10 @@ class SimpleAWGGui(GuiBase):
             "Idle\nVar", 
             "T-tau", 
             "Channels", 
-            "Repetitions", 
             "Start\nAfter Step", 
-            "IQ Phase"
+            "Loop\nTo",
+            "Loop\nN",
+            "IQ Phase",
         ])
 
         self.pulse_sequence_table.setColumnWidth(1,40)
@@ -1758,9 +1770,10 @@ class SimpleAWGGui(GuiBase):
                     self.pulse_sequence_table.cellWidget(row,3).setChecked(False)
                 self.pulse_sequence_table.cellWidget(row,4).setChecked(bool(t_tau))
             self.pulse_sequence_table.cellWidget(row,5).set_channels(step["channels"])
-            self.pulse_sequence_table.cellWidget(row,6).setValue(step["repetitions"])
-            self.pulse_sequence_table.cellWidget(row,7).setValue(step["Receive Trig"])
-            self.pulse_sequence_table.cellWidget(row,8).setValue(step["IQ Phase"])
+            self.pulse_sequence_table.cellWidget(row,6).setValue(step["Receive Trig"])
+            self.pulse_sequence_table.cellWidget(row,7).setValue(step.get("Loop To", 0))
+            self.pulse_sequence_table.cellWidget(row,8).setValue(step.get("Loop N", 1))
+            self.pulse_sequence_table.cellWidget(row,9).setValue(step["IQ Phase"])
 
 
     def _load_rfcontrol(self, checked=False):

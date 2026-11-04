@@ -582,6 +582,7 @@ class PulseCompiler:
         # Reset tracker for this compilation run
         self._step_run_tracker = {id(step): 0 for step in self.all_steps}
         self._active_flags = set()
+        self._loop_counts = {}
         # Segments are collected in one shared structure so that steps sharing a Receive Trig
         # (i.e. running concurrently) write to the same starting offset instead of queuing up
         self._channel_segments = {ch: [] for ch in self.all_channels if ch != "IQ"}
@@ -618,10 +619,10 @@ class PulseCompiler:
         finally:
             self._active_flags.discard(flag_id)
 
-    def _expand_flag(self, flag_id, start_offset):
+    def _expand_flag(self, flag_id, start_offset, steps=None):
         # Every step waiting on this flag starts at the same offset (they run concurrently);
         # each step's own Send Trig chain is anchored independently to that step's own end offset
-        for step in self.steps_by_wait_flag[flag_id]:
+        for step in (self.steps_by_wait_flag[flag_id] if steps is None else steps):
             step_id = id(step)
             repetitions = step.get('repetitions', 1)
             chnl = list(step.get('channels', []))
@@ -713,6 +714,24 @@ class PulseCompiler:
 
             step_end = offset
             self._max_len = max(self._max_len, step_end)
+
+            # Loop To is a 1-based step number; Loop N counts total passes including the first
+            loop_to = step.get('Loop To', 0)
+            loop_n = step.get('Loop N', 1)
+            if loop_to > 0 and loop_n > 1 and loop_to <= len(self.all_steps):
+                count = self._loop_counts.get(step_id, 0) + 1
+                if count < loop_n:
+                    self._loop_counts[step_id] = count
+                    target = self.all_steps[loop_to - 1]
+                    saved_flags = self._active_flags
+                    self._active_flags = set()
+                    try:
+                        self._expand_flag(target.get('Receive Trig', 0), step_end, [target])
+                    finally:
+                        self._active_flags = saved_flags
+                    # The innermost pass continues the chain after the final iteration
+                    continue
+                self._loop_counts[step_id] = 0
 
             # Continue this step's own chain independently - other steps sharing this flag start
             # at the same offset but may finish (and trigger their own next step) at a different time
