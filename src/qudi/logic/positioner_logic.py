@@ -64,9 +64,6 @@ class PositionerLogic(LogicBase):
         """ Activate module. """
         self._poll_interval_ms = int(round(self._poll_interval * 1000))
         self._axis_activity = {axis: False for axis in self.axis_names}
-        self._poll_active = True
-        QtCore.QMetaObject.invokeMethod(self, '_poll_activity_body',
-                                        QtCore.Qt.ConnectionType.QueuedConnection)
 
         self.mode_options = self._positioner().mode_options
         self.mode_options_labels = self._positioner().mode_options_labels
@@ -77,6 +74,21 @@ class PositionerLogic(LogicBase):
     def on_deactivate(self):
         """ Deactivate module. """
         self._poll_active = False
+
+    def start_polling(self, force=False):
+        '''
+        Enable and start the polling cycle. 
+        If force enabled, will start the polling cycle even if poll_active set to true. This will take a few seconds to ensure any previous polling cycle is stopped.
+        '''
+        if not self._poll_active:
+            self._poll_active=True
+            QtCore.QMetaObject.invokeMethod(self, '_poll_activity_body', QtCore.Qt.ConnectionType.QueuedConnection)
+        elif force:
+            self._poll_active=False
+            QtCore.QTimer.singleShot(5*self._poll_interval_ms, self.start_polling)
+
+    def stop_polling(self):
+        self._poll_active=False
 
     @property
     def axis_names(self):
@@ -217,22 +229,26 @@ class PositionerLogic(LogicBase):
         self.sigValuesUpdated.emit(axis,new_values)
         return new_values['cap']
 
-
+    poll_error_count=0
     @QtCore.Slot()
     def _poll_activity_body(self):
         """ Regularly poll the activity indicator of every axis and emit changes. """
         with self._thread_lock:
             if self._poll_active:
-                hw = self._positioner()
-                for axis in self.axis_names:
-                    try:
+                try:
+                    hw = self._positioner()
+                    for axis in self.axis_names:
                         active = bool(hw.get_activity_indicator(axis))
                         output = hw.get_output_voltage(axis)
                         self.sigValuesUpdated.emit(axis, {'output_voltage': output})
-                    except:
-                        self.log.exception(f'Error while polling activity of axis "{axis}".')
-                        continue
+                    
                     if active != self._axis_activity.get(axis):
                         self._axis_activity[axis] = active
                         self.sigActivityChanged.emit(axis, active)
+                except Exception as e:
+                    self.poll_error_count += 1
+                    if self.poll_error_count >= 10:
+                        self._poll_active=False
+                        self.log.exception(f'Error while polling activity, disabling polling: {e}')
+                
                 QtCore.QTimer.singleShot(self._poll_interval_ms, self._poll_activity_body)

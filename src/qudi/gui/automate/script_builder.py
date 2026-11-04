@@ -520,11 +520,13 @@ class ScriptBuilderGUI(GuiBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         importlib.reload(grid_maker)
+
+
+    def on_activate(self):
         self._functionCatalog = FunctionCatalog(self)
         self._grid_maker = grid_maker.GridApp(self)
         self._mw = ScriptBuilder(self)
-
-    def on_activate(self):
+        
         self._connectors = {}
         self._custom = {}
         module_manager = self._qudi_main.module_manager

@@ -63,6 +63,7 @@ class PositionerGui(GuiBase):
     def on_activate(self):
         """ Create all UI objects and show the window. """
         logic = self._positioner_logic()
+        logic.start_polling()
         self._mode_dict = {value: label for label, value in zip(logic.mode_options_labels, logic.mode_options)}
         self._filt_dict = {value: label for label, value in zip(logic.filt_options_labels, logic.filt_options)}
         self._mw = PositionerMainWindow()
@@ -115,6 +116,7 @@ class PositionerGui(GuiBase):
     def on_deactivate(self):
         """ Hide window and disconnect signals. """
         logic = self._positioner_logic()
+        logic.stop_polling()
         logic.sigValuesUpdated.disconnect(self._values_updated)
         logic.sigLimitsUpdated.disconnect(self._limits_updated)
         logic.sigActivityChanged.disconnect(self._activity_changed)

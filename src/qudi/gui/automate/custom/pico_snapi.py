@@ -11,7 +11,7 @@ class PicoWorker(QtCore.QObject):
 
     sigWorkerFinished = QtCore.Signal(object)
     sigAcquireData = QtCore.Signal()
-    dummyMode = True
+    dummyMode = False  # For testing offline.
 
     def __init__(self):
         super().__init__()
