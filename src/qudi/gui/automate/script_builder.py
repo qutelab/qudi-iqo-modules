@@ -350,7 +350,7 @@ class FunctionCatalog(QtCore.QObject):
         self.positioner_logic().set_offset_voltage(axis, offset_voltage)
         if number_steps>0:
             self.positioner_logic().sigActivityChanged.connect(self.finish_positioner, Qt.QueuedConnection)
-            self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection) 
+            self._sigInterrupt.connect(lambda : self.finish_positioner(interrupted=True), Qt.QueuedConnection) 
             self.positioner_logic().set_step_voltage(axis,step_voltage)
             self.positioner_logic().set_step_freq(axis,frequency)
             if direction=='Up':
@@ -412,6 +412,8 @@ class FunctionCatalog(QtCore.QObject):
     @register(params={"loop_count": {"type": int, "default": 1}})
     def LOOP_START(self, loop_count):
         self._loop_list.append( (loop_count, 0, self.parent._mw._current_script_idx) )
+        self.parent._mw.loop_progress.setMaximum(loop_count)
+        self.parent._mw.loop_progress.setValue(1)
         self.sigFuncComplete.emit(f"Starting loop of {loop_count} iterations")
 
     @register()
@@ -420,9 +422,16 @@ class FunctionCatalog(QtCore.QObject):
         if loop[1] < loop[0]-1:  #If we haven't reached the end of the loop, jump back to start
             self.parent._mw._current_script_idx = loop[2]  #Jump back to the function after loop_start
             self._loop_list[-1] = (loop[0], loop[1]+1, loop[2])  #Update loop count
+            self.parent._mw.loop_progress.setValue(loop[1]+2)
             self.sigFuncComplete.emit(f"Loop iteration {loop[1]+2} of {loop[0]}")
         else:  #Otherwise, we're done with the loop, pop it from the list and continue
             self._loop_list.pop()
+            if self._loop_list:  #Restore the enclosing loop's display
+                parent_loop = self._loop_list[-1]
+                self.parent._mw.loop_progress.setMaximum(parent_loop[0])
+                self.parent._mw.loop_progress.setValue(parent_loop[1]+1)
+            else:
+                self.parent._mw.loop_progress.reset()
             self.sigFuncComplete.emit(f"Finished loop of {loop[0]} iterations")
 
     ### TODO: scanner_gui, x,y, and/or z scans
@@ -552,7 +561,8 @@ class ScriptBuilderGUI(GuiBase):
             try:
                 from qudi.gui.automate.custom import pico_snapi
                 self._custom['picoharp'] = pico_snapi.PicoWorker()
-            except:
+            except Exception as e:
+                self.log.warning(f'Error loading picoharp: {e}')
                 self._custom['picoharp'] = None
         else:
             self._custom['picoharp'] = None
@@ -643,6 +653,8 @@ class ScriptBuilder(QMainWindow):
         self.load_btn.clicked.connect(self.load_script)
 
         self.progress = QProgressBar()
+        self.loop_progress = QProgressBar()
+        self.loop_progress.setFormat('Loop progress %v/%m')
 
         right_layout = QVBoxLayout()
         right_layout.addWidget(self.script_list)
@@ -654,6 +666,7 @@ class ScriptBuilder(QMainWindow):
         grid_layout.addWidget(self.grid_checkbox)
         right_layout.addWidget(self.folder_btn)
         right_layout.addWidget(self.progress)
+        right_layout.addWidget(self.loop_progress)
         right_layout.addWidget(self.run_btn)
         right_layout.addWidget(self.stop_btn)
         right_layout.addWidget(self.save_btn)
@@ -787,6 +800,26 @@ class ScriptBuilder(QMainWindow):
         self._log_open=False
 
     
+    def _steps_per_coordinate(self):
+        """Number of step executions for one coordinate, expanding (nested) loops."""
+        multipliers = [1]
+        total = 0
+        for entry in self.script:
+            if entry["name"] == "LOOP_END":
+                total += multipliers[-1]
+                if len(multipliers) > 1:
+                    multipliers.pop()
+            elif entry["name"] == "LOOP_START":
+                total += multipliers[-1]
+                try:
+                    count = int(entry.get("params", {}).get("loop_count", 1))
+                except (TypeError, ValueError):
+                    count = 1
+                multipliers.append(multipliers[-1]*max(count, 1))
+            else:
+                total += multipliers[-1]
+        return total
+
     def start_script(self):
         if len(self.script)==0:
             return
@@ -816,8 +849,10 @@ class ScriptBuilder(QMainWindow):
         self._refresh_script_order()
         self._set_running(True)
 
-        total = len(self._coordinate_list)*len(self.script)
-        self.progress.setMaximum(total)
+        total = len(self._coordinate_list)*self._steps_per_coordinate()
+        self.progress.setMaximum(max(total, 1))
+        self._steps_done = 0
+        self.catalog._loop_list.clear()  #Drop loops left over from an interrupted run
         
         self._current_coord_idx = 0
         self._current_script_idx = 0
@@ -835,7 +870,7 @@ class ScriptBuilder(QMainWindow):
     @QtCore.Slot()
     def next_script_step(self, result=None):
         try:
-            self.progress.setValue(self._current_coord_idx*len(self.script)+self._current_script_idx)
+            self.progress.setValue(self._steps_done)
             if result is not None:
                 self.log_result(result)
 
@@ -873,6 +908,7 @@ class ScriptBuilder(QMainWindow):
         except Exception as e:
             self.finish_script(error=e)
             return
+        self._steps_done += 1
         self._current_script_idx += 1
         if self._current_script_idx >= len(self.script):
             self._current_script_idx = 0
@@ -899,7 +935,8 @@ class ScriptBuilder(QMainWindow):
         else:
             self.catalog.finish(False)
             self.log_result("Script execution complete")
-            QMessageBox.information(self, "Done", "Execution complete")
+            QMessageBox.information(self, "Done", "Execution complete, selected folder reset.")
+            self.folder_path = None  #Assume that next execution needs a new folder.
 
         self.logfile_path = None
         

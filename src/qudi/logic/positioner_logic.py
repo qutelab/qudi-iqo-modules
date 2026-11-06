@@ -69,6 +69,7 @@ class PositionerLogic(LogicBase):
         self.mode_options_labels = self._positioner().mode_options_labels
         self.filt_options = self._positioner().filt_options
         self.filt_options_labels = self._positioner().filt_options_labels
+        self.start_polling()
 
 
     def on_deactivate(self):
@@ -201,16 +202,22 @@ class PositionerLogic(LogicBase):
     def step_up(self, axis, n_steps):
         with self._thread_lock:
             self._positioner().step_up(axis, n_steps)
+            self._axis_activity[axis]=True
+            self.sigActivityChanged.emit(axis, True)
 
     @QtCore.Slot(str, int)
     def step_down(self, axis, n_steps):
         with self._thread_lock:
             self._positioner().step_down(axis, n_steps)
+            self._axis_activity[axis]=True
+            self.sigActivityChanged.emit(axis, True)
 
     @QtCore.Slot(str)
-    def stop(self, axis):
+    def stop(self, axis=None):  #None->All
         with self._thread_lock:
             self._positioner().stop(axis)
+            self._axis_activity[axis]=False
+            self.sigActivityChanged.emit(axis, False)
 
     @QtCore.Slot(str)
     def measure_capacitance(self,axis):
@@ -241,10 +248,9 @@ class PositionerLogic(LogicBase):
                         active = bool(hw.get_activity_indicator(axis))
                         output = hw.get_output_voltage(axis)
                         self.sigValuesUpdated.emit(axis, {'output_voltage': output})
-                    
-                    if active != self._axis_activity.get(axis):
-                        self._axis_activity[axis] = active
-                        self.sigActivityChanged.emit(axis, active)
+                        if active != self._axis_activity.get(axis):
+                            self._axis_activity[axis] = active
+                            self.sigActivityChanged.emit(axis, active)
                 except Exception as e:
                     self.poll_error_count += 1
                     if self.poll_error_count >= 10:

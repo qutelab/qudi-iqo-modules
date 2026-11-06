@@ -6,6 +6,10 @@ from PySide6 import QtCore
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
+import os
+
+systemini = os.environ.get('CONDA_PREFIX')+r"\Lib\site-packages\snAPI\system.ini"
+deviceini = r"C:\Users\qutel\Projects\QE\measurement-code\PicoharpServer-main\PicoharpConfig\PH330_Edge.ini"
 
 class PicoWorker(QtCore.QObject):
 
@@ -28,13 +32,12 @@ class PicoWorker(QtCore.QObject):
             self.sn = None
             self.sigAcquireData.connect(self.acquire_data_dummy, QtCore.Qt.ConnectionType.QueuedConnection)
         else:
-            self.sn = snAPI(systemIni=r"C:\Users\qutel\.conda\envs\qudi\Lib\site-packages\snAPI\system.ini")
+            self.sn = snAPI(systemIni=systemini)
             self.sn.getDevice()
             self.sn.setLogLevel(logLevel=LogLevel.DataFile, onOff=True)
             self.sn.initDevice(MeasMode.T3)
-            self.sn.loadIniConfig(r"C:\Users\qutel\Projects\QE\measurement-code\PicoharpServer-main\PicoharpConfig\PH330_Edge.ini")
+            self.sn.loadIniConfig(deviceini)
             self.sigAcquireData.connect(self.acquire_data, QtCore.Qt.ConnectionType.QueuedConnection)
-
 
     def shutdown(self):
         self.sigAcquireData.disconnect()

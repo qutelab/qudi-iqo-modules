@@ -790,8 +790,9 @@ class SimpleScanLogic(LogicBase):
                 self.device_dict[self._device_select].end_scan()
             except Exception as e:
                 self.log.error(f'Error stopping scan: {e}')
-            
-            self._raw_data = self._raw_data[:self._line_counter]  #Clip incomplete lines
+
+            if self._raw_data:
+                self._raw_data = self._raw_data[:self._line_counter]  #Clip incomplete lines
             self._point_counter=0  #If continued, restart line.
             self.sigScanDataUpdated.emit()
             self.sigScanStateUpdated.emit(False)

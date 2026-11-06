@@ -1522,12 +1522,12 @@ class SimpleAWGGui(GuiBase):
 
         start_after_step = QSpinBox()
         start_after_step.setRange(0, 9999)
-        start_after_step.setValue(0)
+        start_after_step.setValue(row)  #Default to previous step
         self.pulse_sequence_table.setCellWidget(row, 6, start_after_step)
 
         loop_to = QSpinBox()
         loop_to.setRange(0, 9999)
-        loop_to.setValue(0)
+        loop_to.setValue(row+1)  #Default to current value for basic reps
         self.pulse_sequence_table.setCellWidget(row, 7, loop_to)
 
         loop_n = QSpinBox()
@@ -1555,8 +1555,24 @@ class SimpleAWGGui(GuiBase):
         row = self.pulse_sequence_table.currentRow()
 
         if row >= 0:
+            row_sas = self.pulse_sequence_table.cellWidget(row, 6).value()  #If other steps point to this step, then we'll switch them to point to this steps target.
+            if row_sas > row+1:  #Throughout, all entries index from 1 while the actual index is from 0.
+                row_sas+=-1
             self.pulse_sequence_table.removeRow(row)
             self.mark_pulse_sequence_dirty()
+
+            for rowI in range(self.pulse_sequence_table.rowCount()):
+                start_after_step = self.pulse_sequence_table.cellWidget(rowI, 6)
+                if start_after_step.value()>row+1:
+                    start_after_step.setValue(start_after_step.value()-1)
+                elif start_after_step.value()==row+1:
+                    start_after_step.setValue(row_sas)
+                loop_to = self.pulse_sequence_table.cellWidget(rowI, 7)
+                if loop_to.value()>row+1:
+                    loop_to.setValue(loop_to.value()-1)
+                elif loop_to.value()==row+1:
+                    loop_to.setValue(rowI+1)
+
 
     def get_pulse_sequence(self):
         """ Returns the Pulse Sequencer table contents as a sequence of inline pulse/idle blocks """

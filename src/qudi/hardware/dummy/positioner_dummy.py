@@ -292,8 +292,14 @@ class PositionerDummy(PositionerInterface):
         self._t_act_bool[axis] = True
         print(f'[PositionerDummy] m{axis}:step(DOWN,{n_steps})')
 
-    def stop(self, axis):
+    def stop(self, axis=None):
         """ Stop motion on axis. """
-        axis = self._validate_axis(axis)
-        self._t_act_bool[axis] = False
-        print(f'[PositionerDummy] m{axis}:stop()')
+        if axis is None:
+            for axis in self.axis_names:
+                self._validate_axis(axis)
+                self._t_act_bool[axis] = False
+                print(f'[PositionerDummy] m{axis}:stop()')
+        else:
+            axis = self._validate_axis(axis)
+            self._t_act_bool[axis] = False
+            print(f'[PositionerDummy] m{axis}:stop()')

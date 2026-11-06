@@ -464,11 +464,16 @@ class AttocubeANC300(PositionerInterface):
             raise ValueError(f'Stepping Z axis is restricted single-steps for safety reasons.')
         self._anc300.write(f'm{axis}:step(DOWN,{n_steps})')
 
-    def stop(self,axis):
+    def stop(self,axis=None):
         #TODO Verify nothing is returned
         """ Stop motion on axis """
-        axis = self._validate_axis(axis)
-        self._anc300.write(f'm{axis}:stop()')
+        if axis is None:
+            for axis in self.axis_names:
+                self._validate_axis(axis)
+                self._anc300.write(f'm{axis}:stop()')
+        else:
+            axis = self._validate_axis(axis)
+            self._anc300.write(f'm{axis}:stop()')
 
     def wait(self,axis):
         """ Wait for action to complete on axis """
