@@ -299,6 +299,9 @@ class HighFinesseWavemeter(DataInStreamInterface):
 
         return data, timestamp
 
+    def read_last_value_1CH(self):
+        return self.read_single_point()[0][-1]
+
     @property
     def sample_rate(self) -> float:
         """ Read-only property returning the currently set sample rate in Hz.

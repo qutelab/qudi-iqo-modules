@@ -36,6 +36,7 @@ class SimpleLaserDummy(SimpleLaserInterface):
     laser_dummy:
         module.Class: 'laser.simple_laser_dummy.SimpleLaserDummy'
     """
+    _has_piezo = True
 
     def __init__(self, **kwargs):
         """ """
@@ -43,6 +44,7 @@ class SimpleLaserDummy(SimpleLaserInterface):
         self.lstate = LaserState.OFF
         self.shutter = ShutterState.CLOSED
         self.mode = ControlMode.POWER
+        self._scanning_mode = ControlMode.POWER
         self.current_setpoint = 0
         self.power_setpoint = 0
 
@@ -62,6 +64,10 @@ class SimpleLaserDummy(SimpleLaserInterface):
     def disconnect(self):
         self.connected=False
 
+    @property
+    def scanning_mode(self):
+        return str(self._scanning_mode.name)
+    
     def get_power_range(self):
         """ Return optical power range
 
@@ -127,12 +133,19 @@ class SimpleLaserDummy(SimpleLaserInterface):
         self.current_setpoint = current
         self.power_setpoint = math.pow(self.current_setpoint/100, 2) / 4
 
+    _piezo_enabled=False
+    def get_piezo_enabled(self):
+        return self._piezo_enabled
+
+    def set_piezo_enabled(self,state):
+        self._piezo_enabled=bool(state)
+    
     def get_piezo_voltage(self):
         """ Get actual laser piezo voltage
 
         @return float: laser piezo voltage
         """
-        return self.piezo_voltage_setpoint * random.gauss(1, 0.05)
+        return self._piezo_voltage_setpoint * random.gauss(1, 0.05)
 
     def get_piezo_voltage_range(self):
         """ Get laser piezo voltage range.
@@ -141,22 +154,23 @@ class SimpleLaserDummy(SimpleLaserInterface):
         """
         return (0,100)
 
+    _piezo_voltage_setpoint=0
     def get_piezo_voltage_setpoint(self):
         """ Get laser piezo voltage setpoint
 
         @return float: laser piezo voltage setpoint
         """
-        return self.piezo_voltage_setpoint
+        return self._piezo_voltage_setpoint
 
     def set_piezo_voltage(self, piezo_voltage):
         """ Set laser piezo voltage setpoint
 
         @param float current: desired laser piezo voltage setpoint
         """
-        self.piezo_voltage_setpoint = piezo_voltage
+        self._piezo_voltage_setpoint = piezo_voltage
 
     def get_wavelength(self):
-        return 740e-9 + self.piezo_voltage_setpoint*100e-12*random.gauss(1,0.05)
+        return 740e-9 + self._piezo_voltage_setpoint*100e-12*random.gauss(1,0.05)
 
     def allowed_control_modes(self):
         """ Get supported control modes

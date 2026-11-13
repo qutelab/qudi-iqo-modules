@@ -29,7 +29,8 @@ class ControlMode(IntEnum):
     CURRENT = 1
     POWER_MODULATION = 2
     CURRENT_MODULATION = 3
-    UNKNOWN = 4
+    PERCENT = 4
+    UNKNOWN = 5
 
 
 class ShutterState(IntEnum):
@@ -50,12 +51,14 @@ class SimpleLaserInterface(Base):
     """ This interface can be used to control a simple laser. It handles power control, control modes and shutter states
 
     This interface is useful for a standard, fixed/tunable wavelength laser that you can find in a lab.
-    Expanded to include piezo voltage for tunable laser
+    Percent control uses a 0-100 range. Lasers with piezo control set _has_piezo to True
+    and implement the piezo methods below.
     It handles power control via constant power or constant current mode, a shutter state if the hardware has a shutter
     and a temperature regulation control.
 
     """
-    has_power_control=False  #Default
+    _has_piezo = False
+
     @abstractmethod
     def get_power_range(self):
         """ Return laser power range
@@ -128,44 +131,63 @@ class SimpleLaserInterface(Base):
         """
         pass
 
-    @abstractmethod
+    def get_percent(self):
+        """Return the measured output as a percentage (0 to 100)."""
+        raise NotImplementedError
+
+    def get_percent_setpoint(self):
+        """Return the output setpoint as a percentage (0 to 100)."""
+        raise NotImplementedError
+
+    def set_percent(self, percent):
+        """Set the output setpoint as a percentage (0 to 100)."""
+        raise NotImplementedError
+
+    def get_piezo_enabled(self):
+        """
+        return bool: piezo control enabled
+        """
+        raise NotImplementedError
+
+    def set_piezo_enabled(self, state):
+        """
+        param bool: piezo control enabled
+        """
+        raise NotImplementedError
+
     def get_piezo_voltage(self):
         """ Get actual laser piezo voltage
 
         @return float: laser piezo voltage
         """
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def get_piezo_voltage_range(self):
         """ Get laser piezo voltage range.
 
         @return float[2]: laser piezo voltage range
         """
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def get_piezo_voltage_setpoint(self):
         """ Get laser piezo voltage setpoint
 
         @return float: laser piezo voltage setpoint
         """
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def set_piezo_voltage(self, piezo_voltage):
         """ Set laser piezo voltage setpoint
 
         @param float current: desired laser piezo voltage setpoint
         """
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def get_wavelength(self):
         """ If a wavelength is available, set this to return the value
         @return float: laser wavelength
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def allowed_control_modes(self):

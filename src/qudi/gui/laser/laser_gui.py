@@ -161,6 +161,9 @@ class LaserGui(GuiBase):
     sigControlModeChanged = QtCore.Signal(object)
     sigPowerChanged = QtCore.Signal(float, object)
     sigCurrentChanged = QtCore.Signal(float, object)
+    sigPercentChanged = QtCore.Signal(float, object)
+    sigPiezoVoltageChanged = QtCore.Signal(float, object)
+    sigPiezoToggled = QtCore.Signal(bool)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -190,12 +193,26 @@ class LaserGui(GuiBase):
         self._mw.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, self.control_dock_widget)
         self.control_dock_widget.visibilityChanged.connect(self._mw.action_view_controls.setChecked)
         self._mw.action_view_controls.triggered[bool].connect(self.control_dock_widget.setVisible)
-        self.control_dock_widget.power_slider.setRange(*logic.power_range)
-        self.control_dock_widget.power_setpoint_spinbox.setRange(*logic.power_range)
-        self.control_dock_widget.current_slider.setRange(*logic.current_range)
-        self.control_dock_widget.current_setpoint_spinbox.setRange(*logic.current_range)
-        self.control_dock_widget.current_setpoint_spinbox.setSuffix(logic.current_unit)
-        self.control_dock_widget.current_spinbox.setSuffix(logic.current_unit)
+        modes = logic.allowed_control_modes
+        power_supported = bool(modes & {ControlMode.POWER, ControlMode.POWER_MODULATION})
+        current_supported = bool(modes & {ControlMode.CURRENT, ControlMode.CURRENT_MODULATION})
+        percent_supported = ControlMode.PERCENT in modes
+        for mode, button in self.control_dock_widget.mode_buttons.items():
+            button.setVisible(mode in modes)
+        self.control_dock_widget.power_group.setVisible(power_supported)
+        self.control_dock_widget.current_group.setVisible(current_supported)
+        self.control_dock_widget.percent_group.setVisible(percent_supported)
+        self.control_dock_widget.piezo_group.setVisible(logic.has_piezo)
+        if power_supported:
+            self.control_dock_widget.power_slider.setRange(*logic.power_range)
+            self.control_dock_widget.power_setpoint_spinbox.setRange(*logic.power_range)
+        if current_supported:
+            self.control_dock_widget.current_slider.setRange(*logic.current_range)
+            self.control_dock_widget.current_setpoint_spinbox.setRange(*logic.current_range)
+            self.control_dock_widget.current_setpoint_spinbox.setSuffix(logic.current_unit)
+            self.control_dock_widget.current_spinbox.setSuffix(logic.current_unit)
+        if logic.has_piezo:
+            self.control_dock_widget.piezo_voltage_spinbox.setRange(*logic.piezo_voltage_range)
 
         self.output_graph_dock_widget = LaserOutputDockWidget()
         self.output_graph_dock_widget.setAllowedAreas(QtCore.Qt.DockWidgetArea.AllDockWidgetAreas)
@@ -208,7 +225,7 @@ class LaserGui(GuiBase):
         )
         self.output_graph_dock_widget.plot_widget.setLabel('right',
                                                            'Current',
-                                                           units=logic.current_unit,
+                                                           units=logic.current_unit if current_supported else None,
                                                            color=palette.c3.name())
 
         self.temperature_graph_dock_widget = LaserTemperatureDockWidget(
@@ -226,12 +243,20 @@ class LaserGui(GuiBase):
         self.restore_default_view()
 
         # Initialize data from logic
-        self._mw.extra_info_label.setText(logic.extra_info)
+        self._mw.extra_info_label.setText(logic.extra_info or '')
         self._shutter_state_updated(logic.shutter_state)
         self._laser_state_updated(logic.laser_state)
         self._control_mode_updated(logic.control_mode)
-        self._current_setpoint_updated(logic.current_setpoint, None)
-        self._power_setpoint_updated(logic.power_setpoint, None)
+        if current_supported:
+            self._current_setpoint_updated(logic.current_setpoint, None)
+        if power_supported:
+            self._power_setpoint_updated(logic.power_setpoint, None)
+        if percent_supported:
+            self._percent_updated(logic.percent)
+            self._percent_setpoint_updated(logic.percent_setpoint, None)
+        if logic.has_piezo:
+            self._piezo_enabled_updated(logic.piezo_enabled)
+            self._piezo_voltage_updated(logic.piezo_voltage_setpoint, None)
         self._data_updated(logic.data)
 
         # connect control dockwidget signals
@@ -250,6 +275,17 @@ class LaserGui(GuiBase):
         self.control_dock_widget.current_setpoint_spinbox.editingFinished.connect(
             self._current_setpoint_edited
         )
+        self.control_dock_widget.percent_slider.doubleSliderMoved.connect(
+            self.control_dock_widget.percent_setpoint_spinbox.setValue
+        )
+        self.control_dock_widget.percent_slider.sliderReleased.connect(self._percent_slider_moved)
+        self.control_dock_widget.percent_setpoint_spinbox.editingFinished.connect(
+            self._percent_setpoint_edited
+        )
+        self.control_dock_widget.piezo_button.clicked[bool].connect(self.sigPiezoToggled.emit)
+        self.control_dock_widget.piezo_voltage_spinbox.editingFinished.connect(
+            self._piezo_voltage_edited
+        )
 
         # connect remaining main window actions
         self._mw.action_view_default.triggered.connect(self.restore_default_view)
@@ -259,6 +295,9 @@ class LaserGui(GuiBase):
         self.sigShutterToggled.connect(logic.set_shutter_state)
         self.sigCurrentChanged.connect(logic.set_current)
         self.sigPowerChanged.connect(logic.set_power)
+        self.sigPercentChanged.connect(logic.set_percent)
+        self.sigPiezoVoltageChanged.connect(logic.set_piezo_voltage)
+        self.sigPiezoToggled.connect(logic.set_piezo_enabled)
         self.sigControlModeChanged.connect(logic.set_control_mode)
 
         # connect update signals from logic
@@ -267,6 +306,16 @@ class LaserGui(GuiBase):
         )
         logic.sigCurrentSetpointChanged.connect(
             self._current_setpoint_updated, QtCore.Qt.ConnectionType.QueuedConnection
+        )
+        logic.sigPercentChanged.connect(self._percent_updated, QtCore.Qt.ConnectionType.QueuedConnection)
+        logic.sigPercentSetpointChanged.connect(
+            self._percent_setpoint_updated, QtCore.Qt.ConnectionType.QueuedConnection
+        )
+        logic.sigPiezoEnabledChanged.connect(
+            self._piezo_enabled_updated, QtCore.Qt.ConnectionType.QueuedConnection
+        )
+        logic.sigPiezoVoltageSetpointChanged.connect(
+            self._piezo_voltage_updated, QtCore.Qt.ConnectionType.QueuedConnection
         )
         logic.sigControlModeChanged.connect(self._control_mode_updated, QtCore.Qt.ConnectionType.QueuedConnection)
         logic.sigLaserStateChanged.connect(self._laser_state_updated, QtCore.Qt.ConnectionType.QueuedConnection)
@@ -302,6 +351,10 @@ class LaserGui(GuiBase):
         # disconnect all signals
         logic.sigPowerSetpointChanged.disconnect(self._power_setpoint_updated)
         logic.sigCurrentSetpointChanged.disconnect(self._current_setpoint_updated)
+        logic.sigPercentChanged.disconnect(self._percent_updated)
+        logic.sigPercentSetpointChanged.disconnect(self._percent_setpoint_updated)
+        logic.sigPiezoEnabledChanged.disconnect(self._piezo_enabled_updated)
+        logic.sigPiezoVoltageSetpointChanged.disconnect(self._piezo_voltage_updated)
         logic.sigControlModeChanged.disconnect(self._control_mode_updated)
         logic.sigLaserStateChanged.disconnect(self._laser_state_updated)
         logic.sigShutterStateChanged.disconnect(self._shutter_state_updated)
@@ -318,11 +371,19 @@ class LaserGui(GuiBase):
         self.control_dock_widget.current_slider.sliderReleased.disconnect()
         self.control_dock_widget.power_setpoint_spinbox.editingFinished.disconnect()
         self.control_dock_widget.current_setpoint_spinbox.editingFinished.disconnect()
+        self.control_dock_widget.percent_slider.doubleSliderMoved.disconnect()
+        self.control_dock_widget.percent_slider.sliderReleased.disconnect()
+        self.control_dock_widget.percent_setpoint_spinbox.editingFinished.disconnect()
+        self.control_dock_widget.piezo_button.clicked[bool].disconnect()
+        self.control_dock_widget.piezo_voltage_spinbox.editingFinished.disconnect()
         self._mw.action_view_default.triggered.disconnect()
         self.sigLaserToggled.disconnect()
         self.sigShutterToggled.disconnect()
         self.sigCurrentChanged.disconnect()
         self.sigPowerChanged.disconnect()
+        self.sigPercentChanged.disconnect()
+        self.sigPiezoVoltageChanged.disconnect()
+        self.sigPiezoToggled.disconnect()
         self.sigControlModeChanged.disconnect()
 
     def show(self):
@@ -376,14 +437,14 @@ class LaserGui(GuiBase):
 
         @param ControlMode mode: Selected ControlMode enum
         """
-        self.control_dock_widget.control_current_radio_button.setEnabled(False)
-        self.control_dock_widget.control_currentMod_radio_button.setEnabled(False)
+        for button in self.control_dock_widget.mode_buttons.values():
+            button.setEnabled(False)
         self.control_dock_widget.current_setpoint_spinbox.setEnabled(False)
         self.control_dock_widget.current_slider.setEnabled(False)
-        self.control_dock_widget.control_power_radio_button.setEnabled(False)
-        self.control_dock_widget.control_powerMod_radio_button.setEnabled(False)
         self.control_dock_widget.power_setpoint_spinbox.setEnabled(False)
         self.control_dock_widget.power_slider.setEnabled(False)
+        self.control_dock_widget.percent_setpoint_spinbox.setEnabled(False)
+        self.control_dock_widget.percent_slider.setEnabled(False)
         self.sigControlModeChanged.emit(mode)
 
     @QtCore.Slot(float)
@@ -430,6 +491,41 @@ class LaserGui(GuiBase):
         self.control_dock_widget.current_slider.setValue(value)
         self.sigCurrentChanged.emit(value, self.module_uuid)
 
+    @QtCore.Slot()
+    def _percent_slider_moved(self):
+        value = self.control_dock_widget.percent_slider.value()
+        self.control_dock_widget.percent_setpoint_spinbox.setValue(value)
+        self.sigPercentChanged.emit(value, self.module_uuid)
+
+    @QtCore.Slot()
+    def _percent_setpoint_edited(self):
+        value = self.control_dock_widget.percent_setpoint_spinbox.value()
+        self.control_dock_widget.percent_slider.setValue(value)
+        self.sigPercentChanged.emit(value, self.module_uuid)
+
+    @QtCore.Slot()
+    def _piezo_voltage_edited(self):
+        self.sigPiezoVoltageChanged.emit(
+            self.control_dock_widget.piezo_voltage_spinbox.value(), self.module_uuid
+        )
+
+    @QtCore.Slot(float)
+    def _percent_updated(self, value):
+        self.control_dock_widget.percent_spinbox.setValue(value)
+
+    @QtCore.Slot(float, object)
+    def _percent_setpoint_updated(self, value, caller_id):
+        self.control_dock_widget.percent_setpoint_spinbox.setValue(value)
+        self.control_dock_widget.percent_slider.setValue(value)
+
+    @QtCore.Slot(bool)
+    def _piezo_enabled_updated(self, enabled):
+        self.control_dock_widget.piezo_button.setChecked(enabled)
+
+    @QtCore.Slot(float, object)
+    def _piezo_voltage_updated(self, value, caller_id):
+        self.control_dock_widget.piezo_voltage_spinbox.setValue(value)
+
     @QtCore.Slot(float, object)
     def _power_setpoint_updated(self, value, caller_id):
         if caller_id != self.module_uuid:
@@ -444,6 +540,8 @@ class LaserGui(GuiBase):
 
     @QtCore.Slot(object)
     def _control_mode_updated(self, mode):
+        self.control_dock_widget.percent_slider.setEnabled(mode == ControlMode.PERCENT)
+        self.control_dock_widget.percent_setpoint_spinbox.setEnabled(mode == ControlMode.PERCENT)
         if mode in [ControlMode.POWER,ControlMode.POWER_MODULATION]:
             self.control_dock_widget.current_slider.setEnabled(False)
             self.control_dock_widget.current_setpoint_spinbox.setEnabled(False)
@@ -467,11 +565,11 @@ class LaserGui(GuiBase):
             self.control_dock_widget.current_setpoint_spinbox.setEnabled(False)
             self.control_dock_widget.power_slider.setEnabled(False)
             self.control_dock_widget.power_setpoint_spinbox.setEnabled(False)
+            if mode == ControlMode.PERCENT:
+                self.control_dock_widget.control_percent_radio_button.setChecked(True)
 
-        self.control_dock_widget.control_power_radio_button.setEnabled(True)
-        self.control_dock_widget.control_current_radio_button.setEnabled(True)
-        self.control_dock_widget.control_powerMod_radio_button.setEnabled(True)
-        self.control_dock_widget.control_currentMod_radio_button.setEnabled(True)
+        for button in self.control_dock_widget.mode_buttons.values():
+            button.setEnabled(True)
 
     @QtCore.Slot(object)
     def _laser_state_updated(self, state):

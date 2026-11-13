@@ -57,6 +57,7 @@ class SimpleScanLogic(LogicBase):
         module.Class: 'simple_scan_logic.SimpleScanLogic'
         connect:
             laser: laser_dummy
+            wavemeter: wavemeter_dummy
             microwave: microwave_dummy
             data_scanner: finite_sampling_input_dummy
             awg: simple_awg_logic
@@ -65,6 +66,7 @@ class SimpleScanLogic(LogicBase):
     # declare connectors
     _data_scanner = Connector(name='data_scanner', interface=FiniteSamplingInputInterface)
     _laser = Connector(name='laser', interface=SimpleLaserInterface, optional=True)
+    _wavemeter = Connector(name='wavemeter', interface='DataInStreamInterface', optional=True)
     _microwave = Connector(name='microwave', interface=MicrowaveInterface, optional=True)
     _awg = Connector(name='awg', interface='SimpleAWGLogic', optional=True)
     _powermeter = Connector(name='powermeter', interface='ProcessValueInterface', optional=True)
@@ -403,13 +405,17 @@ class SimpleScanLogic(LogicBase):
             self._data_scanner().set_external_clock(False,False,False)
 
         if self._laser.is_connected:
-            if self._laser().has_power_control:
+            if self._laser().scanning_mode=='POWER':
                 laserX = self._laser().set_power
                 laserXlabel='Set Power'
                 laserXunit='W'
-            else:
+            elif self._laser().scanning_mode=='CURRENT':
                 laserX = self._laser().set_current
                 laserXlabel='Set Current'
+                laserXunit=self._laser().get_current_unit()
+            elif self._laser().scanning_mode=='PERCENT':
+                laserX = self._laser().set_percent
+                laserXlabel='Set Percent'
                 laserXunit=''
             self.laserScanner = self.ScanDevice('Laser',
                     laserX,
@@ -425,6 +431,19 @@ class SimpleScanLogic(LogicBase):
             )
             if self._powermeter.is_connected and self._powermeter().connected:
                 self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
+        
+        self.laserPiezoScanner = self.ScanDevice('Laser_Piezo',
+                    self._laser().set_piezo_voltage,
+                    self._wavemeter().read_last_value_1CH,
+                    data_labels=['Piezo Voltage', 'Wavelength'], # x, y1, y2,...
+                    data_units=['V','m'],
+                    static_read_parameters={},
+                    static_set_parameters={laserXlabel:(laserX,0,laserXunit)}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
+                    start_function=lambda : (enable_daq_internal_clock(self), self._wavemeter().start_stream()),
+                    end_function=lambda : (self._wavemeter().stop_stream()),
+                    dependencies=['_laser','_wavemeter'],
+                    parent = self   
+                                                 )
         
         #This ODMR version just scans frequency manually in CW mode.
 
@@ -791,7 +810,7 @@ class SimpleScanLogic(LogicBase):
             except Exception as e:
                 self.log.error(f'Error stopping scan: {e}')
 
-            if self._raw_data:
+            if self._raw_data is not None:
                 self._raw_data = self._raw_data[:self._line_counter]  #Clip incomplete lines
             self._point_counter=0  #If continued, restart line.
             self.sigScanDataUpdated.emit()

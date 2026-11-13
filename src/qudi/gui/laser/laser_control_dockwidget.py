@@ -65,14 +65,17 @@ class LaserControlDockWidget(AdvancedDockWidget):
         self.control_current_radio_button = QtWidgets.QRadioButton('Constant Current')
         self.control_powerMod_radio_button = QtWidgets.QRadioButton('Power Modulation')
         self.control_currentMod_radio_button = QtWidgets.QRadioButton('Current Modulation')
+        self.control_percent_radio_button = QtWidgets.QRadioButton('Percent Power')
         button_group.addButton(self.control_power_radio_button)
         button_group.addButton(self.control_current_radio_button)
         button_group.addButton(self.control_powerMod_radio_button)
         button_group.addButton(self.control_currentMod_radio_button)
+        button_group.addButton(self.control_percent_radio_button)
         layout.addWidget(self.control_power_radio_button,0,0)
         layout.addWidget(self.control_current_radio_button,0,1)
         layout.addWidget(self.control_powerMod_radio_button,1,0)
         layout.addWidget(self.control_currentMod_radio_button,1,1)
+        layout.addWidget(self.control_percent_radio_button, 2, 0)
         self.control_power_radio_button.clicked.connect(
             lambda: self.sigControlModeChanged.emit(ControlMode.POWER)
         )
@@ -85,9 +88,20 @@ class LaserControlDockWidget(AdvancedDockWidget):
         self.control_currentMod_radio_button.clicked.connect(
             lambda: self.sigControlModeChanged.emit(ControlMode.CURRENT_MODULATION)
         )
+        self.control_percent_radio_button.clicked.connect(
+            lambda: self.sigControlModeChanged.emit(ControlMode.PERCENT)
+        )
+        self.mode_buttons = {
+            ControlMode.POWER: self.control_power_radio_button,
+            ControlMode.CURRENT: self.control_current_radio_button,
+            ControlMode.POWER_MODULATION: self.control_powerMod_radio_button,
+            ControlMode.CURRENT_MODULATION: self.control_currentMod_radio_button,
+            ControlMode.PERCENT: self.control_percent_radio_button,
+        }
         main_layout.addWidget(group_box, 2, 0, 1, 2)
 
         group_box = QtWidgets.QGroupBox('Power')
+        self.power_group = group_box
         layout = QtWidgets.QVBoxLayout()
         layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         group_box.setLayout(layout)
@@ -117,6 +131,7 @@ class LaserControlDockWidget(AdvancedDockWidget):
         main_layout.addWidget(group_box, 3, 0)
 
         group_box = QtWidgets.QGroupBox('Current')
+        self.current_group = group_box
         layout = QtWidgets.QVBoxLayout()
         layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         group_box.setLayout(layout)
@@ -143,4 +158,33 @@ class LaserControlDockWidget(AdvancedDockWidget):
                                           QtWidgets.QSizePolicy.Policy.Expanding)
         layout.addWidget(self.current_slider)
         main_layout.addWidget(group_box, 3, 1)
+
+        self.percent_group = QtWidgets.QGroupBox('Percent Power')
+        layout = QtWidgets.QVBoxLayout(self.percent_group)
+        self.percent_spinbox = ScienDSpinBox()
+        self.percent_spinbox.setRange(0, 100)
+        self.percent_spinbox.setSuffix('%')
+        self.percent_spinbox.setReadOnly(True)
+        self.percent_spinbox.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.percent_setpoint_spinbox = ScienDSpinBox()
+        self.percent_setpoint_spinbox.setRange(0, 100)
+        self.percent_setpoint_spinbox.setSuffix('%')
+        self.percent_slider = DoubleSlider(QtCore.Qt.Orientation.Vertical)
+        self.percent_slider.set_granularity(10000)
+        self.percent_slider.setRange(0, 100)
+        self.percent_slider.setMinimumHeight(200)
+        layout.addWidget(self.percent_spinbox)
+        layout.addWidget(self.percent_setpoint_spinbox)
+        layout.addWidget(self.percent_slider)
+        main_layout.addWidget(self.percent_group, 3, 2)
+
+        self.piezo_group = QtWidgets.QGroupBox('Piezo')
+        layout = QtWidgets.QHBoxLayout(self.piezo_group)
+        self.piezo_button = QtWidgets.QPushButton('Enable')
+        self.piezo_button.setCheckable(True)
+        self.piezo_voltage_spinbox = ScienDSpinBox()
+        self.piezo_voltage_spinbox.setSuffix('V')
+        layout.addWidget(self.piezo_button)
+        layout.addWidget(self.piezo_voltage_spinbox)
+        main_layout.addWidget(self.piezo_group, 4, 0, 1, 3)
         main_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Expanding)

@@ -51,6 +51,10 @@ class LaserLogic(LogicBase):
 
     sigPowerSetpointChanged = QtCore.Signal(float, object)
     sigCurrentSetpointChanged = QtCore.Signal(float, object)
+    sigPercentSetpointChanged = QtCore.Signal(float, object)
+    sigPercentChanged = QtCore.Signal(float)
+    sigPiezoVoltageSetpointChanged = QtCore.Signal(float, object)
+    sigPiezoEnabledChanged = QtCore.Signal(bool)
     sigControlModeChanged = QtCore.Signal(object)
     sigLaserStateChanged = QtCore.Signal(object)
     sigShutterStateChanged = QtCore.Signal(object)
@@ -71,6 +75,10 @@ class LaserLogic(LogicBase):
         self._last_power_setpoint = None
         self._last_current_setpoint = None
         self._last_control_mode = None
+        self._last_percent_setpoint = None
+        self._last_percent = None
+        self._last_piezo_voltage_setpoint = None
+        self._last_piezo_enabled = None
 
     def on_activate(self):
         """ Prepare logic module for work.
@@ -83,13 +91,18 @@ class LaserLogic(LogicBase):
 
         # initialize data buffer
         laser = self._laser()
-        allowed_modes = laser.allowed_control_modes()
         self._initialize_data()
         self._last_shutter_state = netobtain(laser.get_shutter_state())
         self._last_laser_state = netobtain(laser.get_laser_state())
         self._last_power_setpoint = netobtain(laser.get_power_setpoint())
         self._last_current_setpoint = netobtain(laser.get_current_setpoint())
         self._last_control_mode = netobtain(laser.get_control_mode())
+        if ControlMode.PERCENT in self.allowed_control_modes:
+            self._last_percent = netobtain(laser.get_percent())
+            self._last_percent_setpoint = netobtain(laser.get_percent_setpoint())
+        if self.has_piezo:
+            self._last_piezo_enabled = netobtain(laser.get_piezo_enabled())
+            self._last_piezo_voltage_setpoint = netobtain(laser.get_piezo_voltage_setpoint())
 
 
     def on_deactivate(self):
@@ -104,6 +117,36 @@ class LaserLogic(LogicBase):
     def allowed_control_modes(self):
         with self._thread_lock:
             return netobtain(self._laser().allowed_control_modes())
+
+    @property
+    def has_piezo(self):
+        with self._thread_lock:
+            return netobtain(self._laser()._has_piezo)
+
+    @property
+    def piezo_voltage_range(self):
+        with self._thread_lock:
+            return netobtain(self._laser().get_piezo_voltage_range())
+
+    @property
+    def piezo_enabled(self):
+        with self._thread_lock:
+            return netobtain(self._laser().get_piezo_enabled())
+
+    @property
+    def piezo_voltage_setpoint(self):
+        with self._thread_lock:
+            return netobtain(self._laser().get_piezo_voltage_setpoint())
+
+    @property
+    def percent(self):
+        with self._thread_lock:
+            return netobtain(self._laser().get_percent())
+
+    @property
+    def percent_setpoint(self):
+        with self._thread_lock:
+            return netobtain(self._laser().get_percent_setpoint())
 
     @property
     def extra_info(self):
@@ -236,9 +279,33 @@ class LaserLogic(LogicBase):
                     control_mode = netobtain(laser.get_control_mode())
                     if control_mode != self._last_control_mode:
                         self._last_control_mode = control_mode
-                        self.sigControlModeChanged.emit(self._last_control_mode, None)
-                except:
-                    pass
+                        self.sigControlModeChanged.emit(self._last_control_mode)
+                except Exception:
+                    self.log.exception('Error while querying laser control mode.')
+                if ControlMode.PERCENT in self.allowed_control_modes:
+                    try:
+                        percent = netobtain(laser.get_percent())
+                        if percent != self._last_percent:
+                            self._last_percent = percent
+                            self.sigPercentChanged.emit(percent)
+                        setpoint = netobtain(laser.get_percent_setpoint())
+                        if setpoint != self._last_percent_setpoint:
+                            self._last_percent_setpoint = setpoint
+                            self.sigPercentSetpointChanged.emit(setpoint, None)
+                    except Exception:
+                        self.log.exception('Error while querying laser percent output.')
+                if self.has_piezo:
+                    try:
+                        enabled = netobtain(laser.get_piezo_enabled())
+                        if enabled != self._last_piezo_enabled:
+                            self._last_piezo_enabled = enabled
+                            self.sigPiezoEnabledChanged.emit(enabled)
+                        voltage = netobtain(laser.get_piezo_voltage_setpoint())
+                        if voltage != self._last_piezo_voltage_setpoint:
+                            self._last_piezo_voltage_setpoint = voltage
+                            self.sigPiezoVoltageSetpointChanged.emit(voltage, None)
+                    except Exception:
+                        self.log.exception('Error while querying laser piezo control.')
                 # Read current, power and temperature values and put them in the data buffer
                 try:
                     temperatures = laser.get_temperatures()
@@ -253,10 +320,10 @@ class LaserLogic(LogicBase):
                     for name, temp in temperatures.items():
                         self._data[name] = np.roll(self._data[name], -1)
                         self._data[name][-1] = temp
-                    if self._data['power'] is not None:
+                    if self._data['power'] is not None and power is not None:
                         self._data['power'] = np.roll(self._data['power'], -1)
                         self._data['power'][-1] = power
-                    if self._data['current'] is not None:
+                    if self._data['current'] is not None and current is not None:
                         self._data['current'] = np.roll(self._data['current'], -1)
                         self._data['current'][-1] = current
 
@@ -360,8 +427,43 @@ class LaserLogic(LogicBase):
             self._laser().set_current(current)
             self.sigCurrentSetpointChanged.emit(self.current_setpoint, caller_id)
 
+    @QtCore.Slot(float, object)
+    def set_percent(self, percent, caller_id=None):
+        """Set laser output in percent."""
+        with self._thread_lock:
+            try:
+                self._laser().set_percent(percent)
+            except Exception:
+                self.log.exception('Error while setting laser percent output.')
+            self._last_percent_setpoint = self.percent_setpoint
+            self.sigPercentSetpointChanged.emit(self._last_percent_setpoint, caller_id)
+
+    @QtCore.Slot(float, object)
+    def set_piezo_voltage(self, voltage, caller_id=None):
+        """Set the laser piezo voltage."""
+        with self._thread_lock:
+            try:
+                self._laser().set_piezo_voltage(voltage)
+            except Exception:
+                self.log.exception('Error while setting laser piezo voltage.')
+            self._last_piezo_voltage_setpoint = self.piezo_voltage_setpoint
+            self.sigPiezoVoltageSetpointChanged.emit(self._last_piezo_voltage_setpoint, caller_id)
+
+    @QtCore.Slot(bool)
+    def set_piezo_enabled(self, enabled):
+        """Enable or disable the laser piezo controller."""
+        with self._thread_lock:
+            try:
+                self._laser().set_piezo_enabled(enabled)
+            except Exception:
+                self.log.exception('Error while setting laser piezo enabled state.')
+            self._last_piezo_enabled = self.piezo_enabled
+            self.sigPiezoEnabledChanged.emit(self._last_piezo_enabled)
+
     def _initialize_data(self):
         self._data = {name: np.zeros(self._buffer_length) for name in self._laser().get_temperatures()}
         self._data['time'] = time.time() - np.arange(self._buffer_length)[::-1] * self._query_interval
-        self._data['power'] = np.zeros(self._buffer_length)
-        self._data['current'] = np.zeros(self._buffer_length)
+        self._data['power'] = (np.zeros(self._buffer_length)
+                               if self._laser().get_power() is not None else None)
+        self._data['current'] = (np.zeros(self._buffer_length)
+                                 if self._laser().get_current() is not None else None)

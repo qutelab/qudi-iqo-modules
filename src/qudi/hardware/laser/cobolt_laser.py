@@ -36,19 +36,20 @@ class CoboltLaser(SimpleLaserInterface):
             interface: 'COM3'
             maxpower: 40 # in mW
             maxcurrent: 155 # in mA
+            scanning_mode: PERCENT  # Choose from POWER, CURRENT, PERCENT for how this device should be scanned by simple_scan_logic
 
     """
 
     serial_interface = ConfigOption(name='interface', default='COM3', missing='warn')
-    maxpower = ConfigOption(name='maxpower', default=40.0, missing='warn')
-    maxcurrent = ConfigOption(name='maxcurrent', default=155.0, missing='warn')
-    has_power_control = True  #For setting default control in scanner
+    _max_power = ConfigOption(name='maxpower', default=40.0, missing='warn')  #Todo: Update on quteli config file so I can update the format here.
+    _max_current = ConfigOption(name='maxcurrent', default=155.0, missing='warn')
+    _scanning_mode = ConfigOption(name='scanning_mode', default='POWER', missing='warn')
 
     def on_activate(self):
         """ Activate Module.
         """
         self.connect_laser(self.serial_interface)
-
+        self._scanning_mode=self._interpret_control_mode(self._scanning_mode)
 
     def on_deactivate(self):
         """ Deactivate module
@@ -112,7 +113,13 @@ class CoboltLaser(SimpleLaserInterface):
         else:
             if value in self.allowed_control_modes():
                 return value
-
+            else:
+                raise ValueError('Control mode not in allowed_control_modes')
+    
+    @property
+    def scanning_mode(self):
+        return str(self._scanning_mode.name)
+    
     def get_control_mode(self):
         """ Get active control mode
 
@@ -159,7 +166,7 @@ class CoboltLaser(SimpleLaserInterface):
 
             @return float[2]: range for laser power
         """
-        return 0, self.maxpower/1000
+        return 0, self._max_power/1000
 
     def set_power(self, power):
         """ Set laser power setpoint in W
@@ -187,7 +194,7 @@ class CoboltLaser(SimpleLaserInterface):
 
             @return float[2]: range for laser current
         """
-        return 0, self.maxcurrent
+        return 0, self._max_current
 
     def get_current(self):
         """ Get current laser current
