@@ -98,6 +98,7 @@ class SimpleScanGui(GuiBase):
             'x_range':      logic.x_range,
             'time_per':     logic.time_per,
             'time_wait':    logic.time_wait,
+            'time_wait_start':    logic.time_wait_start,
             'number_scans': logic.number_scans,
             'scan_order':    logic.scan_order,
         })

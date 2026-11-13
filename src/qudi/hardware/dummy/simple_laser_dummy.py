@@ -44,9 +44,9 @@ class SimpleLaserDummy(SimpleLaserInterface):
         self.lstate = LaserState.OFF
         self.shutter = ShutterState.CLOSED
         self.mode = ControlMode.POWER
-        self._scanning_mode = ControlMode.POWER
         self.current_setpoint = 0
         self.power_setpoint = 0
+        self._scanning_mode = ControlMode.POWER
 
     def on_activate(self):
         """ Activate module.
@@ -66,7 +66,38 @@ class SimpleLaserDummy(SimpleLaserInterface):
 
     @property
     def scanning_mode(self):
-        return str(self._scanning_mode.name)
+        return self._scanning_mode
+
+    @scanning_mode.setter
+    def scanning_mode(self,value):
+        self._scanning_mode = self._interpret_control_mode(value)
+
+    #Shortcuts so scan module calls the right functions
+    def scanning_get_power(self):
+        if self.scanning_mode.name=='POWER':
+            return self.get_power()
+        else:
+            return self.get_current()
+    
+    def scanning_set_power(self, value):
+        if self.scanning_mode.name=='POWER':
+            return self.set_power(value)
+        else:
+            return self.set_current(value)
+
+    @property
+    def scanning_power_unit(self):
+        if self.scanning_mode.name=='POWER':
+            return 'W'
+        else:
+            return self.get_current_unit()
+
+    @property
+    def scanning_power_name(self):
+        if self.scanning_mode.name=='POWER':
+            return 'Power'
+        else:
+            return 'Current'
     
     def get_power_range(self):
         """ Return optical power range
@@ -102,7 +133,7 @@ class SimpleLaserDummy(SimpleLaserInterface):
 
         @return str: unit
         """
-        return '%'
+        return 'mA'
 
     def get_current_range(self):
         """ Get laser current range.
@@ -178,6 +209,31 @@ class SimpleLaserDummy(SimpleLaserInterface):
         @return frozenset: set of supported ControlMode enums
         """
         return frozenset({ControlMode.POWER, ControlMode.CURRENT, ControlMode.POWER_MODULATION, ControlMode.CURRENT_MODULATION})
+
+    _mode_dict = {  #Aliases to control modes
+            'POWER': ControlMode.POWER,
+            'CONSTANTPOWER': ControlMode.POWER,
+            'CURRENT': ControlMode.CURRENT,
+            'CONSTANTCURRENT': ControlMode.CURRENT,
+            'POWER_MODULATION': ControlMode.POWER_MODULATION,
+            'POWERMODULATION': ControlMode.POWER_MODULATION,
+            'CURRENT_MODULATION': ControlMode.CURRENT_MODULATION,
+            'CURRENTMODULATION': ControlMode.CURRENT_MODULATION,
+            'PERCENT': ControlMode.PERCENT
+        }
+    
+    def _interpret_control_mode(self, value):
+        if type(value) is str:
+            value = value.upper()
+            if value in self._mode_dict.keys():
+                return self._mode_dict[value]
+            else:
+                raise ValueError('Control mode not found')
+        else:
+            if value in self.allowed_control_modes():
+                return value
+            else:
+                raise ValueError('Control mode not in allowed_control_modes')
 
     def get_control_mode(self):
         """ Get the currently active control mode

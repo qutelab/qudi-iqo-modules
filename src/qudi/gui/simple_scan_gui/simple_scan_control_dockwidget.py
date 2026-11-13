@@ -121,6 +121,16 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         )
         form.addRow('Wait Time:', self.time_wait_spinbox)
 
+        # ── Start wait time ───────────────────────────────────────────────────
+        self.time_wait_start_spinbox = ScienDSpinBox()
+        self.time_wait_start_spinbox.setDecimals(4)
+        self.time_wait_start_spinbox.setSuffix('s')
+        self.time_wait_start_spinbox.setMinimum(0)
+        self.time_wait_start_spinbox.setValue(0)
+        self.time_wait_start_spinbox.setToolTip(
+            'Settling time after moving to each x position before recording'
+        )
+        form.addRow('Start Wait Time:', self.time_wait_start_spinbox)
         # ── Number of scans ───────────────────────────────────────────────────
         self.number_scans_spinbox = QtWidgets.QSpinBox()
         self.number_scans_spinbox.setMinimum(1)
@@ -144,6 +154,9 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         )
         self.time_wait_spinbox.editingFinished.connect(
             lambda: self.sigParameterChanged.emit('time_wait', self.time_wait_spinbox.value())
+        )
+        self.time_wait_start_spinbox.editingFinished.connect(
+            lambda: self.sigParameterChanged.emit('time_wait_start', self.time_wait_start_spinbox.value())
         )
         self.number_scans_spinbox.editingFinished.connect(
             lambda: self.sigParameterChanged.emit('number_scans', self.number_scans_spinbox.value())
@@ -329,6 +342,11 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
             self.time_wait_spinbox.setValue(float(params['time_wait']))
             self.time_wait_spinbox.blockSignals(False)
 
+        if 'time_wait_start' in params:
+            self.time_wait_start_spinbox.blockSignals(True)
+            self.time_wait_start_spinbox.setValue(float(params['time_wait_start']))
+            self.time_wait_start_spinbox.blockSignals(False)
+
         if 'number_scans' in params:
             self.number_scans_spinbox.blockSignals(True)
             self.number_scans_spinbox.setValue(int(params['number_scans']))
@@ -349,6 +367,7 @@ class SimpleScanControlDockWidget(AdvancedDockWidget):
         self.x_steps_spinbox.setEnabled(enabled)
         self.time_per_spinbox.setEnabled(enabled)
         self.time_wait_spinbox.setEnabled(enabled)
+        self.time_wait_start_spinbox.setEnabled(enabled)
         self.number_scans_spinbox.setEnabled(enabled)
         self.scan_order_dropdown.setEnabled(enabled)
         for widget in self._static_param_widgets.values():

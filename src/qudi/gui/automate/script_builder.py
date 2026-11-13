@@ -226,17 +226,19 @@ class FunctionCatalog(QtCore.QObject):
         "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "time_wait_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait_start},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
         "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
                         "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
         "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().odmrScanner._static_set_parameters['RF Power'][1]},
     })
-    def record_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power):
+    def record_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, time_wait_start, number_scans, scan_order, RF_power):
         # Implementation of simple scan specifically using ODMR to control its specific parameters.
         self.simple_scan_logic().scan_device = 'ODMR'
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().time_wait_start = time_wait_start
         self.simple_scan_logic().number_scans = number_scans
         self.simple_scan_logic().scan_order = scan_order
         self.simple_scan_logic().set_static_set_parameter_value('ODMR','RF Power', RF_power)
@@ -251,17 +253,19 @@ class FunctionCatalog(QtCore.QObject):
         "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "time_wait_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait_start},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
         "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
                         "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
         "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().pulsedOdmrScanner._static_set_parameters['RF Power'][1]},
     })
-    def record_Pulsed_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power):
+    def record_Pulsed_ODMR(self, x_start, x_end, number_steps, time_per, time_wait, time_wait_start, number_scans, scan_order, RF_power):
         # Implementation of simple scan specifically using Pulsed ODMR to control its specific parameters.
         self.simple_scan_logic().scan_device = 'Pulsed ODMR'
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().time_wait_start = time_wait_start
         self.simple_scan_logic().number_scans = number_scans
         self.simple_scan_logic().scan_order = scan_order
         self.simple_scan_logic().set_static_set_parameter_value('Pulsed ODMR','RF Power', RF_power)
@@ -276,18 +280,20 @@ class FunctionCatalog(QtCore.QObject):
         "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "time_wait_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait_start},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
         "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
                         "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
         "RF_power": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().timedOdmrScanner._static_set_parameters['RF Power'][1]},
         "Frequency": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().timedOdmrScanner._static_set_parameters['Frequency'][1]},
     })
-    def record_Timed_ODMR(self, t_start, t_end, number_steps, time_per, time_wait, number_scans, scan_order, RF_power, Frequency):
+    def record_Timed_ODMR(self, t_start, t_end, number_steps, time_per, time_wait, time_wait_start, number_scans, scan_order, RF_power, Frequency):
         # Implementation of simple scan specifically using Pulsed ODMR to control its specific parameters.
         self.simple_scan_logic().scan_device = 'Timed ODMR'
         self.simple_scan_logic().x_range = (t_start,t_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().time_wait_start = time_wait_start
         self.simple_scan_logic().number_scans = number_scans
         self.simple_scan_logic().scan_order = scan_order
         self.simple_scan_logic().set_static_set_parameter_value('Timed ODMR','RF Power', RF_power)
@@ -305,16 +311,18 @@ class FunctionCatalog(QtCore.QObject):
         "number_steps": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().x_range[2]},
         "time_per": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_per},
         "time_wait": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait},
+        "time_wait_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().time_wait_start},
         "number_scans": {"type": int, "default": lambda ctx: ctx.simple_scan_logic().number_scans},
         "scan_order": {"type":[str], "entries": lambda ctx: ctx.simple_scan_logic()._scan_order_options,
                         "default": lambda ctx: ctx.simple_scan_logic()._scan_order},
     })
-    def record_scan(self, scan_device, x_start, x_end, number_steps, time_per, time_wait, number_scans, scan_order):
+    def record_scan(self, scan_device, x_start, x_end, number_steps, time_per, time_wait, time_wait_start, number_scans, scan_order):
         # Implementation for recording generic scan. Logic will contain list of addressable devices.
         self.simple_scan_logic().scan_device = scan_device
         self.simple_scan_logic().x_range = (x_start,x_end,number_steps)
         self.simple_scan_logic().time_per = time_per
         self.simple_scan_logic().time_wait = time_wait
+        self.simple_scan_logic().time_wait_start = time_wait_start
         self.simple_scan_logic().number_scans = number_scans
         self.simple_scan_logic().scan_order = scan_order
         
@@ -612,6 +620,7 @@ class ScriptBuilder(QMainWindow):
         self._log_open = False
         self.folder_path = None
         self.printLogToConsole = True
+        self._continue_possible = False
 
         cw = QWidget()
         self.setCentralWidget(cw)
@@ -640,6 +649,7 @@ class ScriptBuilder(QMainWindow):
         self.folder_btn = QPushButton("Select Folder")
         self.run_btn = QPushButton("Run Script")
         self.stop_btn = QPushButton("Stop Script")
+        self.continue_btn = QPushButton("Continue Script")
         self.save_btn = QPushButton("Save Script")
         self.load_btn = QPushButton("Load Script")
 
@@ -649,6 +659,7 @@ class ScriptBuilder(QMainWindow):
         self.folder_btn.clicked.connect(self.select_folder)
         self.run_btn.clicked.connect(self.start_script, Qt.QueuedConnection)
         self.stop_btn.clicked.connect(lambda: self.finish_script(True), Qt.QueuedConnection)
+        self.continue_btn.clicked.connect(self.continue_script, Qt.QueuedConnection)
         self.save_btn.clicked.connect(self.save_script)
         self.load_btn.clicked.connect(self.load_script)
 
@@ -669,6 +680,7 @@ class ScriptBuilder(QMainWindow):
         right_layout.addWidget(self.loop_progress)
         right_layout.addWidget(self.run_btn)
         right_layout.addWidget(self.stop_btn)
+        right_layout.addWidget(self.continue_btn)
         right_layout.addWidget(self.save_btn)
         right_layout.addWidget(self.load_btn)
 
@@ -692,6 +704,10 @@ class ScriptBuilder(QMainWindow):
         self.grid_checkbox.setEnabled(not state)
         self.folder_btn.setEnabled(not state)
         self.run_btn.setEnabled(not state)
+        if self._continue_possible:
+            self.continue_btn.setEnabled(not state)
+        else:
+            self.continue_btn.setEnabled(False)
         self.stop_btn.setEnabled(state)
         self.save_btn.setEnabled(not state)
         self.load_btn.setEnabled(not state)
@@ -863,8 +879,25 @@ class ScriptBuilder(QMainWindow):
 
         self.catalog.sigFuncComplete.connect(self.next_script_step, Qt.QueuedConnection)  #Connect function completion signal to next step
         
-
+        self._continue_possible = True
         self.next_script_step()  #Start first step
+
+    @QtCore.Slot()
+    def continue_script(self):
+        print('Continuing?',self._continue_possible)
+        if self._continue_possible:
+            self.log_result(f'Continuing scan of {len(self._coordinate_list)} coordinates:')
+            self.catalog.sigFuncComplete.connect(self.next_script_step, Qt.QueuedConnection)  #Connect function completion signal to next step
+            self._set_running(True)
+            #Go back to previous step
+            self._steps_done = max((0,self._steps_done-1))
+            if self._current_script_idx==0:   
+                if self._current_coord_idx>0:
+                    self._current_coord_idx+=-1
+                    self._current_script_idx = len(self.script)-1
+            else:
+                self._current_script_idx+=-1
+            self.next_script_step()
 
 
     @QtCore.Slot()
@@ -923,7 +956,6 @@ class ScriptBuilder(QMainWindow):
             self.catalog.sigFuncComplete.disconnect(self.next_script_step)
         except:
             pass  #In case it was disconnected somehow already.
-        self._set_running(False)
         if interrupted:
             self.catalog.finish(True)
             self.log_result("Script execution interrupted by user")
@@ -933,10 +965,12 @@ class ScriptBuilder(QMainWindow):
             self.log_result(f"Script execution failed due to error: {error}")
             QMessageBox.information(self, "Script error", f"Script execution failed due to error:\n{error}")
         else:
+            self._continue_possible = False
             self.catalog.finish(False)
             self.log_result("Script execution complete")
             QMessageBox.information(self, "Done", "Execution complete, selected folder reset.")
             self.folder_path = None  #Assume that next execution needs a new folder.
+        self._set_running(False)
 
         self.logfile_path = None
         

@@ -36,7 +36,7 @@ class CoboltLaser(SimpleLaserInterface):
             interface: 'COM3'
             maxpower: 40 # in mW
             maxcurrent: 155 # in mA
-            scanning_mode: PERCENT  # Choose from POWER, CURRENT, PERCENT for how this device should be scanned by simple_scan_logic
+            scanning_mode: POWER  # Choose from POWER, CURRENT for how this device should be scanned by simple_scan_logic
 
     """
 
@@ -143,6 +143,33 @@ class CoboltLaser(SimpleLaserInterface):
             self.laser.power_modulation_mode()
         elif mode == ControlMode.CURRENT_MODULATION:
             self.laser.current_modulation_mode()
+
+    #Shortcuts so scan module calls the right functions
+    def scanning_get_power(self):
+        if self.scanning_mode=='POWER':
+            return self.get_power()
+        else:
+            return self.get_current()
+    
+    def scanning_set_power(self, value):
+        if self.scanning_mode=='POWER':
+            return self.set_power(value)
+        else:
+            return self.set_current(value)
+
+    @property
+    def scanning_power_unit(self):
+        if self.scanning_mode=='POWER':
+            return 'W'
+        else:
+            return self.get_current_unit()
+
+    @property
+    def scanning_power_name(self):
+        if self.scanning_mode=='POWER':
+            return 'Power'
+        else:
+            return 'Current'
 
     def get_power(self):
         """ Current laser power

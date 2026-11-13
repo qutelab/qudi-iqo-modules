@@ -140,7 +140,7 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
         # self.plot_widget.addItem(self.target_point)
         self.target_point = self.plot_widget.snap_line
 
-        self.plot_widget.setLabel('left', 'Intensity', units='cps')
+        self.plot_widget.setLabel('left', 'Intensity', units='counts')
         self.plot_widget.setLabel('bottom', 'Wavelength', units='m')
         self.plot_widget.setMinimumHeight(300)
         main_layout.addWidget(self.plot_widget, 2, 0, 1, 3)

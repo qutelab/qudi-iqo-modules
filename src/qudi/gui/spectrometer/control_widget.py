@@ -71,8 +71,9 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         main_layout.addWidget(self.save_background_button, 1, 2)
 
         self.progress_bar = QtWidgets.QProgressBar()
-        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat('%v/%m')
         main_layout.addWidget(self.progress_bar, 2, 0, 1, 3)
 
         # Add separator
@@ -100,7 +101,7 @@ class SpectrometerControlWidget(QtWidgets.QWidget):
         number_background_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.number_background_input = QtWidgets.QSpinBox()
         self.number_background_input.setMinimum(1)
-        self.number_spectra_input.setMaximum(999999)
+        self.number_background_input.setMaximum(999999)
         self.number_background_input.setValue(1)
         self.number_background_input.setToolTip('Number of background spectra to acquire and average.')
         switch_layout.addWidget(number_background_label, switchII, 0)

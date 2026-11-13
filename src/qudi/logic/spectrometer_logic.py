@@ -276,7 +276,7 @@ class SpectrometerLogic(LogicBase):
             data = np.array(dataMean)
 
         if self._background_correction:
-            if not np.all(self._wavelength_bkg == self._wavelength):
+            if not self.background_available:
                 self.log.warning('Background not updated at this wavelength, disabling background correction')
                 self._background_correction = False
             else:
@@ -334,6 +334,12 @@ class SpectrometerLogic(LogicBase):
         
         return data
 
+    @property
+    def background_available(self):
+        if (np.all(self._wavelength_bkg == self._wavelength)) and (self.background is not None):
+            return True
+        else:
+            return False
 
     @property
     def x_data(self):
@@ -402,16 +408,15 @@ class SpectrometerLogic(LogicBase):
         self.sig_state_updated.emit()
 
     def save_all_data(self, name_tag='', root_dir=None, metadata=None):
-        self.save_spectrum_data(processed=True, name_tag=name_tag, root_dir=root_dir, metadata=metadata)
-        if self._background is not None:
+        if self.background_available:
             self.save_spectrum_data(background=True, name_tag=name_tag, root_dir=root_dir, metadata=metadata)
         self.save_spectrum_data(name_tag=name_tag, root_dir=root_dir, metadata=metadata)
 
-    def save_spectrum_data(self, processed = False, background=False, name_tag='', root_dir=None, metadata=None):
+    def save_spectrum_data(self, background=False, include_processed = True, name_tag='', root_dir=None, metadata=None):
         """ Saves the current spectrum data to a file.
 
-        @param bool processed: Save the processed (mean with BG correction and differential if available)
         @param bool background: Whether this is a background spectrum (dark field) or not. Ignored if processed=True
+        @param bool include_processed: Also save the processed (mean with BG correction and differential if available), only if background=False
         @param string name_tag: postfix name tag for saved filename.
         @param string root_dir: overwrite the file position in necessary
         @param dict metadata: additional metadata to add to the saved file
@@ -420,20 +425,14 @@ class SpectrometerLogic(LogicBase):
         # write experimental parameters
         metadata = metadata if metadata else {}
         if background:
-            metadata.update(self._bkg_parameters_at_start)
+            if self.background_available:
+                metadata.update(self._bkg_parameters_at_start)
+            else:
+                self.log.warning('Background not up to date, cannot save.')
+                return
         else:
             metadata.update(self._spec_parameters_at_start)
-        if processed:
-            metadata.update( {'acquisition repetitions': self.repetitions,
-                        'differential_spectrum'  : self.differential_spectrum,
-                        'background_correction'  : self.background_correction,
-                        })
-            if self.fit_method != 'No Fit' and self.fit_results is not None:
-                metadata['fit_method'] = self.fit_method
-                metadata['fit_results'] = self.fit_results.params
-                metadata['fit_region'] = self.fit_region
         
-
         if background:
             x_data = self.x_data_bkg
         else:
@@ -446,21 +445,8 @@ class SpectrometerLogic(LogicBase):
             header = ['Wavelength (nm)', ]
 
         # prepare the data
-        if processed:
-            spectrum = self.spectrum
-            if spectrum is None:
-                self.log.error('No spectrum to save.')
-                return
-            timestamp = self._spec_timestamp
-            background_data = self.background
-            if background_data is not None:
-                if np.all(self._wavelength == self._wavelength_bkg):
-                    data.append(background_data)
-                    header.append('Background')
-            data.append(spectrum)
-            header.append('Signal')
-            file_label = 'spectrum' + name_tag
-        elif background:
+        #First save raw background/data
+        if background:
             if self._background is None:
                 self.log.error('No background to save.')
                 return
@@ -490,18 +476,54 @@ class SpectrometerLogic(LogicBase):
                     header.append(f'Spectrum-Off {ii+1}')
             file_label = 'spectrum_raw' + name_tag
 
-        # save the date to file
+        # save the data to file
         ds = TextDataStorage(root_dir=self.module_default_data_dir if root_dir is None else root_dir)
-
         file_path, _, _ = ds.save_data(np.array(data).T,
                                        column_headers=header,
                                        metadata=metadata,
                                        nametag=file_label,
                                        timestamp=timestamp,
                                        column_dtypes=[float] * len(header))
-        self.log.info(f'Spectrum saved to:{file_path}')
 
-        if processed:
+        # Also saved processed
+        if include_processed and not background:
+            metadata.update( {'acquisition repetitions': self.repetitions,
+                        'differential_spectrum'  : self.differential_spectrum,
+                        'background_correction'  : self.background_correction,
+                        })
+            if self.fit_method != 'No Fit' and self.fit_results is not None:
+                metadata['fit_method'] = self.fit_method
+                metadata['fit_results'] = self.fit_results.params
+                metadata['fit_region'] = self.fit_region
+
+            if self._axis_type_frequency:
+                data = [x_data * 1e-12, ]
+                header = ['Frequency (THz)', ]
+            else:
+                data = [x_data * 1e9, ]
+                header = ['Wavelength (nm)', ]
+            spectrum = self.spectrum
+            if spectrum is None:
+                self.log.error('No spectrum to save.')
+                return
+            timestamp = self._spec_timestamp
+            if self.background_available:
+                background_data = self.background
+                data.append(background_data)
+                header.append('Background')
+            data.append(spectrum)
+            header.append('Signal')
+            file_label = 'spectrum' + name_tag
+
+            # save the procesesd data to file
+            ds = TextDataStorage(root_dir=self.module_default_data_dir if root_dir is None else root_dir)
+            file_path, _, _ = ds.save_data(np.array(data).T,
+                                       column_headers=header,
+                                       metadata=metadata,
+                                       nametag=file_label,
+                                       timestamp=timestamp,
+                                       column_dtypes=[float] * len(header))
+
             # save the figure into a file
             figure, ax1 = plt.subplots()
             rescale_factor, prefix = self._get_si_scaling(np.max(data[1]))
@@ -529,6 +551,8 @@ class SpectrometerLogic(LogicBase):
             figure.tight_layout()
 
             ds.save_thumbnail(figure, file_path=file_path.rsplit('.', 1)[0])
+
+        self.log.info(f'Spectrum saved to:{file_path}')
 
         
 

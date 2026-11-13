@@ -22,13 +22,11 @@ If not, see <https://www.gnu.org/licenses/>.
 __all__ = ['SpectrometerGui']
 
 import importlib
-from time import perf_counter
 from PySide6 import QtCore
 
 from qudi.core.module import GuiBase
 from qudi.core.connector import Connector
 from qudi.core.statusvariable import StatusVar
-from qudi.core.configoption import ConfigOption
 from qudi.util.widgets.fitting import FitConfigurationDialog, FitWidget
 
 from qudi.logic.spectrometer_logic import SpectrometerLogic
@@ -48,8 +46,6 @@ class SpectrometerGui(GuiBase):
         module.Class: 'spectrometer.spectrometer_gui.SpectrometerGui'
         connect:
             spectrometer_logic: 'spectrometerlogic'
-        options:
-            progress_poll_interval: 1  # in seconds
 
     """
 
@@ -60,28 +56,16 @@ class SpectrometerGui(GuiBase):
     _delete_fit = StatusVar(name='delete_fit', default=True)
     _target_x = StatusVar(name='target_x', default=0)
 
-    # ConfigOptions
-    _progress_poll_interval = ConfigOption(name='progress_poll_interval',
-                                           default=1,
-                                           missing='nothing')
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._mw = None
         self._fsd = None
-        self._start_acquisition_timestamp = 0
-        self._progress_timer = None
+        self._progress_acquisition_type = None
+        self._progress_completed = 0
 
     def on_activate(self):
         """ Definition and initialisation of the GUI.
         """
-        # process value for progress bar and poll timer
-        self._start_acquisition_timestamp = 0
-        self._progress_timer = QtCore.QTimer(parent=self)
-        self._progress_timer.setSingleShot(True)
-        self._progress_timer.setInterval(round(1000 * self._progress_poll_interval))
-        self._progress_timer.timeout.connect(self._update_progress_bar)
-
         # setting up the window
         self._mw = spectrometer_window.SpectrometerMainWindow()
 
@@ -98,14 +82,15 @@ class SpectrometerGui(GuiBase):
 
         # Connect signals
         self._spectrometer_logic().sig_data_updated.connect(self.update_data)
+        self._spectrometer_logic().sig_data_updated.connect(self._update_progress_bar)
         self._spectrometer_logic().sig_state_updated.connect(self.update_state)
         self._spectrometer_logic().sig_fit_updated.connect(self.update_fit)
 
         self._mw.control_widget.acquire_button.clicked.connect(self.acquire_spectrum)
         self._mw.control_widget.spectrum_live_button.clicked.connect(self.live_spectrum)
         self._mw.control_widget.background_button.clicked.connect(self.acquire_background)
-        self._mw.action_save_spectrum.triggered.connect(self.save_spectrum)
-        self._mw.action_save_background.triggered.connect(self.save_background)
+        self._mw.action_save_spectrum.triggered.connect(lambda : self._spectrometer_logic().save_spectrum_data(background=False))
+        self._mw.action_save_background.triggered.connect(lambda : self._spectrometer_logic().save_spectrum_data(background=True))
         self._mw.control_widget.background_correction_switch.sigStateChanged.connect(
             self.background_correction_changed
         )
@@ -173,10 +158,7 @@ class SpectrometerGui(GuiBase):
     def on_deactivate(self):
         """ Deinitialisation performed during deactivation of the module.
         """
-        # Delete and disconnect timer
-        self._progress_timer.timeout.disconnect()
-        self._progress_timer.stop()
-        self._progress_timer = None
+        # Stop and disconnect temperature timer
         self._temp_timer.timeout.disconnect()
         self._temp_timer.stop()
 
@@ -188,6 +170,7 @@ class SpectrometerGui(GuiBase):
 
         # disconnect signals
         self._spectrometer_logic().sig_data_updated.disconnect(self.update_data)
+        self._spectrometer_logic().sig_data_updated.disconnect(self._update_progress_bar)
         self._spectrometer_logic().sig_state_updated.disconnect(self.update_state)
         self._spectrometer_logic().sig_fit_updated.disconnect(self.update_fit)
 
@@ -227,16 +210,10 @@ class SpectrometerGui(GuiBase):
     def update_state(self):
         # Update the text of the buttons according to logic state
         if self._spectrometer_logic().acquisition_running:
-            self._start_acquisition_timestamp = perf_counter()
-            self._mw.control_widget.progress_bar.setValue(0)
-            self._progress_timer.start()
-            #self._mw.control_widget.acquire_button.setText('Stop Spectrum')
-            #self._mw.control_widget.background_button.setText('Stop Background')
+            self._mw.control_widget.acquire_button.setText('Stop Spectrum')
+            self._mw.control_widget.background_button.setText('Stop Background')
         else:
-            self._mw.control_widget.progress_bar.setValue(
-                self._mw.control_widget.progress_bar.maximum()
-            )
-            self._progress_timer.stop()
+            self._progress_acquisition_type = None
             self._mw.control_widget.acquire_button.setText('Acquire Spectrum')
             self._mw.control_widget.background_button.setText('Acquire Background')
             self._mw.control_widget.acquire_button.setEnabled(True)
@@ -334,10 +311,15 @@ class SpectrometerGui(GuiBase):
             self._spectrometer_logic().background_correction = self._mw.control_widget.background_correction_switch.isChecked()
             self._spectrometer_logic().number_spectra = self._mw.control_widget.number_spectra_input.value()
             self._spectrometer_logic().differential_spectrum = self._mw.control_widget.differential_spectrum_switch.isChecked()
+            self._progress_acquisition_type = 'spectrum'
+            self._progress_completed = 0
+            self._mw.control_widget.progress_bar.setRange(0, self._spectrometer_logic().number_spectra)
+            self._mw.control_widget.progress_bar.setFormat('%v/%m')
+            self._mw.control_widget.progress_bar.setValue(0)
             self._mw.control_widget.acquire_button.setText('Stop Spectrum')
             self._mw.control_widget.background_button.setEnabled(False)
             self._mw.control_widget.spectrum_live_button.setEnabled(False)
-            self._spectrometer_logic().run_get_spectrum()
+            self._spectrometer_logic().run_get_spectrum(live=False)
         else:
             self._spectrometer_logic().stop()
             self._mw.control_widget.acquire_button.setText('Acquire Spectrum')
@@ -345,6 +327,7 @@ class SpectrometerGui(GuiBase):
 
     def live_spectrum(self):
         if not self._spectrometer_logic().acquisition_running:
+            self._progress_acquisition_type = None
             self._spectrometer_logic().background_correction = self._mw.control_widget.background_correction_switch.isChecked()
             self._spectrometer_logic().number_spectra = self._mw.control_widget.number_spectra_input.value()
             self._spectrometer_logic().differential_spectrum = self._mw.control_widget.differential_spectrum_switch.isChecked()
@@ -358,18 +341,17 @@ class SpectrometerGui(GuiBase):
             self._spectrometer_logic().background_correction = self._mw.control_widget.background_correction_switch.isChecked()
             self._spectrometer_logic().number_background = self._mw.control_widget.number_background_input.value()
             self._spectrometer_logic().differential_spectrum = self._mw.control_widget.differential_spectrum_switch.isChecked()
+            self._progress_acquisition_type = 'background'
+            self._progress_completed = 0
+            self._mw.control_widget.progress_bar.setRange(0, self._spectrometer_logic().number_background)
+            self._mw.control_widget.progress_bar.setFormat('%v/%m')
+            self._mw.control_widget.progress_bar.setValue(0)
             self._spectrometer_logic().run_get_background()
             self._mw.control_widget.background_button.setText('Stop Background')
             self._mw.control_widget.acquire_button.setEnabled(False)  #Re-enabling handled by update_state
         else:
             self._spectrometer_logic().stop()
             self._mw.control_widget.background_button.setText('Acquire Background')
-
-    def save_spectrum(self):
-        self._spectrometer_logic().save_spectrum_data(background=False)
-
-    def save_background(self):
-        self._spectrometer_logic().save_spectrum_data(background=True)
 
     def background_correction_changed(self):
         self._spectrometer_logic().background_correction = self._mw.control_widget.background_correction_switch.isChecked()
@@ -446,9 +428,9 @@ class SpectrometerGui(GuiBase):
 
     @QtCore.Slot()
     def _update_progress_bar(self) -> None:
+        if self._progress_acquisition_type is None:
+            return
+
         progress_bar = self._mw.control_widget.progress_bar
-        max_ticks = progress_bar.maximum()
-        if progress_bar.value() < max_ticks:
-            elapsed_time_ticks = round(100 * (perf_counter() - self._start_acquisition_timestamp))
-            progress_bar.setValue(elapsed_time_ticks)
-            self._progress_timer.start()
+        self._progress_completed = min(self._progress_completed + 1, progress_bar.maximum())
+        progress_bar.setValue(self._progress_completed)

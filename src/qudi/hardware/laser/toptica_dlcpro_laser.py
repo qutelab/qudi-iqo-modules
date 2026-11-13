@@ -35,17 +35,17 @@ class DLCPro(SimpleLaserInterface):
     dlcpro_laser:
         module.Class: 'laser.toptica_dlcpro_laser.DLCPro'
         options:            
+            ip_address: 192.168.1.4
             max_current: 90 # in mA
             max_piezo_voltage: 75  # in V
             #min_piezo_voltage: 0  # in V, default 0
-            scanning_mode: CURRENT  # Choose from POWER, CURRENT, PERCENT for how this device should be scanned by simple_scan_logic
 
     """
     
 
     #serial_interface = ConfigOption(name='interface', default='COM3', missing='warn')
     #_maxpower = ConfigOption(name='maxpower', default=40.0, missing='warn')
-    _scanning_mode = ConfigOption(name='scanning_mode', default='CURRENT', missing='warn')
+    _ip_address = ConfigOption(name='ip_address', missing='error')
     _max_current = ConfigOption(name='max_current', missing='error')
     _max_piezo_voltage = ConfigOption(name='max_piezo_voltage', missing='error')
     _min_piezo_voltage = ConfigOption(name='min_piezo_voltage', default=0, missing='nothing')
@@ -56,7 +56,6 @@ class DLCPro(SimpleLaserInterface):
         """ Activate Module.
         """
         self.connect_laser()
-        self._scanning_mode=self._interpret_control_mode(self._scanning_mode)
 
     def on_deactivate(self):
         """ Deactivate module
@@ -69,8 +68,8 @@ class DLCPro(SimpleLaserInterface):
             @return bool: connection success
         """
         try:
-            self.laser = Client(NetworkConnection('DL pro'))
-            label = self.laser.get('type', str)
+            self.laser = Client(NetworkConnection(self._ip_address))
+            self.laser.open()
             ##(self.mfg, self.model, self.serial, self.version) = idn.split(',')
         except Exception as e:
             self.log.warning(f'Unable to connect to PDL810 laser: {e}')
@@ -84,7 +83,7 @@ class DLCPro(SimpleLaserInterface):
         """ Close the connection to the instrument.
         """
         if self.connected:
-            self.laser.disconnect()
+            self.laser.close()
             self.connected=False
 
     def allowed_control_modes(self):
@@ -119,10 +118,6 @@ class DLCPro(SimpleLaserInterface):
             else:
                 raise ValueError('Control mode not in allowed_control_modes')
 
-    @property
-    def scanning_mode(self):
-        return str(self._scanning_mode.name)
-
     def get_control_mode(self):
         """ Get active control mode
 
@@ -133,18 +128,6 @@ class DLCPro(SimpleLaserInterface):
     def set_control_mode(self, mode):
         if mode != ControlMode.CURRENT:
             raise ValueError('DLC Pro only supports current control')
-
-    def get_power(self):
-        return None
-
-    def get_power_setpoint(self):
-        return None
-
-    def get_power_range(self):
-        raise NotImplementedError('DLC Pro does not support power control')
-
-    def set_power(self, power):
-        raise NotImplementedError('DLC Pro does not support power control')
 
     def get_shutter_state(self):
         return ShutterState.NO_SHUTTER
@@ -203,6 +186,21 @@ class DLCPro(SimpleLaserInterface):
     #         self.laser.write_intensity(power)
     #     else:
     #         raise ValueError('Requested power above maximum configured value')
+
+    #Shortcuts so scan module calls the right functions
+    def scanning_get_power(self):
+        return self.get_current()
+    
+    def scanning_set_power(self, value):
+        self.set_current(value)
+
+    @property
+    def scanning_power_unit(self):
+        return self.get_current_unit()
+
+    @property
+    def scanning_power_name(self):
+        return 'Current'
 
     def get_current_unit(self):
         """ Get unit for current

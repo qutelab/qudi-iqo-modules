@@ -102,13 +102,13 @@ class SpectrometerMainWindow(QtWidgets.QMainWindow):
         self.action_save_spectrum = QtGui.QAction(icon=save_spec_icon,
                                                       text='Save Spectrum',
                                                       parent=self)
-        self.action_save_spectrum.setToolTip('Save the currently shown spectrum.')
+        self.action_save_spectrum.setToolTip('Save the raw spectrum data.')
 
         save_back_icon = QtGui.QIcon(os.path.join(icon_path, 'document-save'))
         self.action_save_background = QtGui.QAction(icon=save_back_icon,
                                                         text='Save Background',
                                                         parent=self)
-        self.action_save_background.setToolTip('Save the current background spectrum.')
+        self.action_save_background.setToolTip('Save the raw background spectrum.')
 
         self.action_show_data = QtGui.QAction(text='Show Data', parent=self)
         self.action_show_data.setToolTip('Show/Hide spectrometer data plot and analysis dock.')

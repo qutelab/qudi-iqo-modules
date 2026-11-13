@@ -24,7 +24,7 @@ import numpy as np
 import time
 from datetime import datetime
 import matplotlib.pyplot as plt
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 from collections.abc import Callable
 
 from qudi.util.datafitting import FitContainer, FitConfigurationsModel
@@ -56,8 +56,9 @@ class SimpleScanLogic(LogicBase):
     simple_scan_logic:
         module.Class: 'simple_scan_logic.SimpleScanLogic'
         connect:
-            laser: laser_dummy
-            wavemeter: wavemeter_dummy
+            laser: laser_dummy  #Which laser to use for power scanning
+            laser_piezo: laser_dummy  #Which laser to use for piezo scanning
+            wavemeter: wavemeter_dummy  #For use with laser_piezo scanning
             microwave: microwave_dummy
             data_scanner: finite_sampling_input_dummy
             awg: simple_awg_logic
@@ -66,6 +67,7 @@ class SimpleScanLogic(LogicBase):
     # declare connectors
     _data_scanner = Connector(name='data_scanner', interface=FiniteSamplingInputInterface)
     _laser = Connector(name='laser', interface=SimpleLaserInterface, optional=True)
+    _laser_piezo = Connector(name='laser_piezo', interface=SimpleLaserInterface, optional=True)
     _wavemeter = Connector(name='wavemeter', interface='DataInStreamInterface', optional=True)
     _microwave = Connector(name='microwave', interface=MicrowaveInterface, optional=True)
     _awg = Connector(name='awg', interface='SimpleAWGLogic', optional=True)
@@ -78,8 +80,9 @@ class SimpleScanLogic(LogicBase):
     _device_select = StatusVar(default='Laser')
     _x_range = StatusVar(default={})  #start, end, n-steps
     _x_scale = StatusVar(default={})  #linear or log
-    _time_per = StatusVar(default=1)
-    _time_wait = StatusVar(default=0.1) #Time to wait at each step before counting
+    _time_per = StatusVar(default=0.5)
+    _time_wait = StatusVar(default=0.) #Time to wait at each step before counting
+    _time_wait_start = StatusVar(default=0.) #Time to wait before first step for instruments to settle
     _number_scans = StatusVar(default=1)
     _scan_order = StatusVar(default='False')
     _device_settings_store = StatusVar(default={})
@@ -405,23 +408,11 @@ class SimpleScanLogic(LogicBase):
             self._data_scanner().set_external_clock(False,False,False)
 
         if self._laser.is_connected:
-            if self._laser().scanning_mode=='POWER':
-                laserX = self._laser().set_power
-                laserXlabel='Set Power'
-                laserXunit='W'
-            elif self._laser().scanning_mode=='CURRENT':
-                laserX = self._laser().set_current
-                laserXlabel='Set Current'
-                laserXunit=self._laser().get_current_unit()
-            elif self._laser().scanning_mode=='PERCENT':
-                laserX = self._laser().set_percent
-                laserXlabel='Set Percent'
-                laserXunit=''
             self.laserScanner = self.ScanDevice('Laser',
-                    laserX,
+                    self._laser().scanning_set_power,
                     #lambda : self._laser().get_power(),
-                    data_labels=[laserXlabel], # x, y1, y2,...
-                    data_units=[laserXunit],
+                    data_labels=[self._laser().scanning_power_name], # x, y1, y2,...
+                    data_units=[self._laser().scanning_power_unit],
                     static_read_parameters={},
                     static_set_parameters={}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
                     start_function=lambda : (enable_daq_internal_clock(self)),
@@ -429,116 +420,118 @@ class SimpleScanLogic(LogicBase):
                     dependencies=['_laser'],
                     parent = self
             )
-            if self._powermeter.is_connected and self._powermeter().connected:
-                self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
-        
-        self.laserPiezoScanner = self.ScanDevice('Laser_Piezo',
-                    self._laser().set_piezo_voltage,
+        if self._powermeter.is_connected and self._powermeter().connected:
+            self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
+
+        if self._laser_piezo.is_connected:
+            self.laserPiezoScanner = self.ScanDevice('Laser_Piezo',
+                    self._laser_piezo().set_piezo_voltage,
                     self._wavemeter().read_last_value_1CH,
                     data_labels=['Piezo Voltage', 'Wavelength'], # x, y1, y2,...
                     data_units=['V','m'],
                     static_read_parameters={},
-                    static_set_parameters={laserXlabel:(laserX,0,laserXunit)}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
+                    static_set_parameters={self._laser().scanning_power_name:(self._laser().scanning_set_power,0,self._laser().scanning_power_unit)}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
                     start_function=lambda : (enable_daq_internal_clock(self), self._wavemeter().start_stream()),
                     end_function=lambda : (self._wavemeter().stop_stream()),
-                    dependencies=['_laser','_wavemeter'],
+                    dependencies=['_laser_piezo','_wavemeter'],
                     parent = self   
                                                  )
         
         #This ODMR version just scans frequency manually in CW mode.
 
-        self.odmrScanner = self.ScanDevice('ODMR',
-                lambda x: setattr(self._microwave(), 'cw_frequency', x),
-                data_labels=['Frequency'], # x, y1, y2,...
-                data_units=['Hz'],
-                static_read_parameters={},
-                static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm')},
-                start_function=lambda : (enable_daq_internal_clock(self), self._microwave().set_cw(), self._microwave().cw_on()),
-                end_function=lambda : self._microwave().cw_off(),
-                dependencies=['_microwave'],
-                parent = self
-        )
+        if self._microwave.is_connected:
+            self.odmrScanner = self.ScanDevice('ODMR',
+                    lambda x: setattr(self._microwave(), 'cw_frequency', x),
+                    data_labels=['Frequency'], # x, y1, y2,...
+                    data_units=['Hz'],
+                    static_read_parameters={},
+                    static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm')},
+                    start_function=lambda : (enable_daq_internal_clock(self), self._microwave().set_cw(), self._microwave().cw_on()),
+                    end_function=lambda : self._microwave().cw_off(),
+                    dependencies=['_microwave'],
+                    parent = self
+            )
 
-        #This ODMR version scans frequency manually in Pulsed mode.
-        #Set up channels for ratio
-        clockO = self._data_scanner()._gate_on_external_clock
-        self._data_scanner()._gate_on_external_clock = True  #For retrieving gated channel list
-        scanner_channels_G = list(self._data_scanner().active_channels)
-        self._data_scanner()._gate_on_external_clock = clockO  #Reset
-        scanner_channels_G.sort()
-        self._pulsed_numerator_channel = scanner_channels_G[0] #Default
-        if len(scanner_channels_G)>1:
-            self._pulsed_denominator_channel = scanner_channels_G[1] #Default
-        else:
-            self._pulsed_denominator_channel = scanner_channels_G[0] #Default
-        #print('Scanner Channels',scanner_channels_G)
-
-        def _pulsed_ODMR_getY(self):
-            # Get ratio of digital channels as selected
-            currentPoint = self._raw_data[self._line_counter][self._point_order[self._point_counter]]
-            dev_y_len = self.pulsedOdmrScanner.len_y
-            numIdx = 1+dev_y_len + self._scanner_channels.index(self._pulsed_numerator_channel)
-            denIdx = 1+dev_y_len + self._scanner_channels.index(self._pulsed_denominator_channel)
-            if currentPoint[denIdx]==0:
-                return 0
+            #This ODMR version scans frequency manually in Pulsed mode.
+            #Set up channels for ratio
+            clockO = self._data_scanner()._gate_on_external_clock
+            self._data_scanner()._gate_on_external_clock = True  #For retrieving gated channel list
+            scanner_channels_G = list(self._data_scanner().active_channels)
+            self._data_scanner()._gate_on_external_clock = clockO  #Reset
+            scanner_channels_G.sort()
+            self._pulsed_numerator_channel = scanner_channels_G[0] #Default
+            if len(scanner_channels_G)>1:
+                self._pulsed_denominator_channel = scanner_channels_G[1] #Default
             else:
-                return currentPoint[numIdx]/currentPoint[denIdx]
+                self._pulsed_denominator_channel = scanner_channels_G[0] #Default
+            #print('Scanner Channels',scanner_channels_G)
 
-        def _pulsed_start_scan(self):
-            self._pulsed_initialGate = self._data_scanner()._gate_on_external_clock
-            self._data_scanner().set_external_clock(gate=True)
-            if self._microwave().cw_frequency < 1e9:
-                self._microwave().set_pulsed(frequency=1e9)
-            else:
-                self._microwave().set_pulsed()
-            if self._awg() is not None:  #Just for dummy capability.
-                self._awg().start_output()
-            self._microwave().cw_on()
+            def _pulsed_ODMR_getY(self):
+                # Get ratio of digital channels as selected
+                currentPoint = self._raw_data[self._line_counter][self._point_order[self._point_counter]]
+                dev_y_len = self.pulsedOdmrScanner.len_y
+                numIdx = 1+dev_y_len + self._scanner_channels.index(self._pulsed_numerator_channel)
+                denIdx = 1+dev_y_len + self._scanner_channels.index(self._pulsed_denominator_channel)
+                if currentPoint[denIdx]==0:
+                    return 0
+                else:
+                    return currentPoint[numIdx]/currentPoint[denIdx]
 
-        def _pulsed_end_scan(self):
-            self._microwave().cw_off()
-            if self._awg() is not None:
-                self._awg().stop_output()
-            try:
-                self._data_scanner()._gate_on_external_clock = self._pulsed_initialGate
-                del self._pulsed_initialGate
-            except:
-                pass  #Likely the start was never run
-            
+            def _pulsed_start_scan(self):
+                self._pulsed_initialGate = self._data_scanner()._gate_on_external_clock
+                self._data_scanner().set_external_clock(gate=True)
+                if self._microwave().cw_frequency < 1e9:
+                    self._microwave().set_pulsed(frequency=1e9)
+                else:
+                    self._microwave().set_pulsed()
+                if self._awg() is not None:  #Just for dummy capability.
+                    self._awg().start_output()
+                self._microwave().cw_on()
 
-        self.pulsedOdmrScanner = self.ScanDevice('Pulsed ODMR',
-                lambda x: setattr(self._microwave(), 'cw_frequency', x),
+            def _pulsed_end_scan(self):
+                self._microwave().cw_off()
+                if self._awg() is not None:
+                    self._awg().stop_output()
+                try:
+                    self._data_scanner()._gate_on_external_clock = self._pulsed_initialGate
+                    del self._pulsed_initialGate
+                except:
+                    pass  #Likely the start was never run
+                
+
+            self.pulsedOdmrScanner = self.ScanDevice('Pulsed ODMR',
+                    lambda x: setattr(self._microwave(), 'cw_frequency', x),
+                    lambda : _pulsed_ODMR_getY(self),
+                    data_labels=['Frequency','Ratio'], # x, y1, y2,...
+                    data_units=['Hz',''],
+                    static_read_parameters={},
+                    static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
+                                        'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
+                                                            self._pulsed_numerator_channel, '', scanner_channels_G),
+                                        'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
+                                                                self._pulsed_denominator_channel, '', scanner_channels_G),},
+                    start_function=lambda : _pulsed_start_scan(self),
+                    end_function=lambda : _pulsed_end_scan(self),
+                    dependencies=['_awg','_microwave'],
+                    parent = self
+            )
+            self.timedOdmrScanner = self.ScanDevice('Timed ODMR',
+                lambda x: self._awg().set_variable_time(x),
                 lambda : _pulsed_ODMR_getY(self),
-                data_labels=['Frequency','Ratio'], # x, y1, y2,...
-                data_units=['Hz',''],
+                data_labels=['Time','Ratio'], # x, y1, y2,...
+                data_units=['s',''],
                 static_read_parameters={},
                 static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
-                                       'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
-                                                           self._pulsed_numerator_channel, '', scanner_channels_G),
-                                       'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
-                                                             self._pulsed_denominator_channel, '', scanner_channels_G),},
+                                    'Frequency': (lambda frequency: setattr(self._microwave(), 'cw_frequency', frequency), 2.7e9, 'Hz'),
+                                    'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
+                                                        self._pulsed_numerator_channel, '', scanner_channels_G),
+                                    'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
+                                                            self._pulsed_denominator_channel, '', scanner_channels_G),},
                 start_function=lambda : _pulsed_start_scan(self),
                 end_function=lambda : _pulsed_end_scan(self),
                 dependencies=['_awg','_microwave'],
                 parent = self
-        )
-        self.timedOdmrScanner = self.ScanDevice('Timed ODMR',
-            lambda x: self._awg().set_variable_time(x),
-            lambda : _pulsed_ODMR_getY(self),
-            data_labels=['Time','Ratio'], # x, y1, y2,...
-            data_units=['s',''],
-            static_read_parameters={},
-            static_set_parameters={'RF Power': (lambda power: setattr(self._microwave(), 'cw_power', power), -60, 'dBm'),
-                                   'Frequency': (lambda frequency: setattr(self._microwave(), 'cw_frequency', frequency), 2.7e9, 'Hz'),
-                                   'Ratio Numerator': (lambda channel: setattr(self,'_pulsed_numerator_channel', channel), 
-                                                       self._pulsed_numerator_channel, '', scanner_channels_G),
-                                   'Ratio Denominator': (lambda channel: setattr(self,'_pulsed_denominator_channel', channel), 
-                                                         self._pulsed_denominator_channel, '', scanner_channels_G),},
-            start_function=lambda : _pulsed_start_scan(self),
-            end_function=lambda : _pulsed_end_scan(self),
-            dependencies=['_awg','_microwave'],
-            parent = self
-        )
+            )
 
 
         self.device_dict = {} # For populating list
@@ -698,6 +691,17 @@ class SimpleScanLogic(LogicBase):
         self._time_wait = value
         self.sigScanParametersUpdated.emit({'time_wait' : value})
 
+
+    @property
+    def time_wait_start(self):
+        return self._time_wait_start
+    
+    @time_wait_start.setter
+    def time_wait_start(self,value):
+        assert value>=0, 'time_wait must be greater than or equal to 0'
+        self._time_wait_start = value
+        self.sigScanParametersUpdated.emit({'time_wait_start' : value})
+
     _scan_order_options = ['Forward','Backward','Forward_Backward','Random']
     @property
     def scan_order(self):
@@ -719,7 +723,7 @@ class SimpleScanLogic(LogicBase):
         if f'{self.scan_device}/' in label:
             self.set_static_set_parameter_value(self.scan_device,label,value)
         else:
-            if label in ['x_range','number_scans','time_per','time_wait','scan_order','x_scale']:
+            if label in ['x_range','number_scans','time_per','time_wait','time_wait_start','scan_order','x_scale']:
                 setattr(self,label,value)
             else:
                 raise ValueError('Unexpected label request to be set:',label)
@@ -731,6 +735,7 @@ class SimpleScanLogic(LogicBase):
         """
         
         sleep(0.1)  #Brief pause to allow settings to set in case start clicked on immediately from other setting. Maybe better way of doing this?
+        QtWidgets.QApplication.processEvents()
         if self.x_range[2] == 0:
             self.log.error('X range not set for device, cannot start scan.')
             return
@@ -767,7 +772,7 @@ class SimpleScanLogic(LogicBase):
                 self.sigScanDataUpdated.emit()
                 self.sigScanStateUpdated.emit(True)
 
-                self._scan()  # Start the scanner loop.
+                self._scan(startQ=True)  # Start the scanner loop.
             except Exception as e:
                 self.stop_scan()  # Stop device, clear lock
                 self.log.error(f'Error while starting scan: {e}')
@@ -844,7 +849,7 @@ class SimpleScanLogic(LogicBase):
             self.stop_scan()
 
     @QtCore.Slot(bool)
-    def _scan(self, point_ready=False):
+    def _scan(self, point_ready=False, startQ=False):
         """ 
         Method to scan data. Iterating through _x_data and _number_scans, this will repeatedely call itself until the scan is complete.
         For each data point, after setting x_value, it will first wait _time_wait, then signal itself to actually record the data.
@@ -910,7 +915,10 @@ class SimpleScanLogic(LogicBase):
 
         
                 device.set_x(self._x_data[self._point_order[self._point_counter]])
-                self._sigAcquire.emit(self._time_wait)
+                if startQ:
+                    self._sigAcquire.emit(self._time_wait_start+self._time_wait)
+                else:
+                    self._sigAcquire.emit(self._time_wait)
 
                 
                 

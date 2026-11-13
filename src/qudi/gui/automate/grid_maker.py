@@ -157,7 +157,7 @@ class GridApp(qw.QWidget):
         self.btn_select.toggled.connect(self.toggle_select_mode)
         self.btn_delete_selected.clicked.connect(self.delete_selected)
         self.btn_add_manual.toggled.connect(self.toggle_add_manual_mode)
-        self.btn_clear.clicked.connect(lambda: self.update_grid(None))
+        self.btn_clear.clicked.connect(self.clear_grid)
         self.btn_clear_prog.clicked.connect(lambda: self.update_done(None,None))
 
         #Defaults
@@ -335,6 +335,10 @@ class GridApp(qw.QWidget):
         pts = self.grid[idx]
         self.scatter_highlight.setData(pts[:, 0], pts[:, 1])
 
+    def clear_grid(self):
+        self.grid=None
+        self.update_grid()
+
     def delete_selected(self):
         if self.grid is None or not self.selected_indices:
             return
@@ -414,6 +418,7 @@ class GridApp(qw.QWidget):
             self.scatter.setData([])
         else:
             self.scatter.setData(*np.array(data).T)
+        self.update_done()  #Reset progress
 
     @QtCore.Slot()
     def update_done(self,data=None,currentPoint=None):

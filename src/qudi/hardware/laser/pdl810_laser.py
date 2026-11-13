@@ -32,15 +32,9 @@ class PDL810(SimpleLaserInterface):
 
     pdl810_laser:
         module.Class: 'laser.pdl810_laser.PDL810'
-        options:
-            scanning_mode: PERCENT  # Choose from POWER, CURRENT, PERCENT for how this device should be scanned by simple_scan_logic
-            #interface: 'COM3'
-            #maxpower: 40 # in mW
-            #maxcurrent: 155 # in mA
 
     """
     
-    _scanning_mode = ConfigOption(name='scanning_mode', default='CURRENT', missing='warn')
     #serial_interface = ConfigOption(name='interface', default='COM3', missing='warn')
     #maxpower = ConfigOption(name='maxpower', default=40.0, missing='warn')
     #maxcurrent = ConfigOption(name='maxcurrent', default=155.0, missing='warn')
@@ -50,7 +44,6 @@ class PDL810(SimpleLaserInterface):
         """ Activate Module.
         """
         self.connect_laser()
-        self._scanning_mode=self._interpret_control_mode(self._scanning_mode)
 
     def on_deactivate(self):
         """ Deactivate module
@@ -114,10 +107,6 @@ class PDL810(SimpleLaserInterface):
             else:
                 raise ValueError('Control mode not in allowed_control_modes')
     
-    @property
-    def scanning_mode(self):
-        return str(self._scanning_mode.name)
-    
     def get_control_mode(self):
         """ Get active control mode
 
@@ -128,33 +117,6 @@ class PDL810(SimpleLaserInterface):
     def set_control_mode(self, mode):
         if mode != ControlMode.PERCENT:
             raise ValueError('PDL810 only supports percent control')
-
-    def get_power(self):
-        return None
-
-    def get_power_setpoint(self):
-        return None
-
-    def get_power_range(self):
-        raise NotImplementedError('PDL810 does not support power control in watts')
-
-    def set_power(self, power):
-        raise NotImplementedError('PDL810 does not support power control in watts')
-
-    def get_current(self):
-        return None
-
-    def get_current_setpoint(self):
-        return None
-
-    def get_current_range(self):
-        raise NotImplementedError('PDL810 does not support current control')
-
-    def get_current_unit(self):
-        raise NotImplementedError('PDL810 does not support current control')
-
-    def set_current(self, current):
-        raise NotImplementedError('PDL810 does not support current control')
 
     def get_shutter_state(self):
         return ShutterState.NO_SHUTTER
@@ -182,79 +144,21 @@ class PDL810(SimpleLaserInterface):
     #     # elif mode == ControlMode.CURRENT_MODULATION:
     #         # self.laser.current_modulation_mode()
 
-    # def get_power(self):
-    #     """ Current laser power
+    #Shortcuts so scan module calls the right functions
+    def scanning_get_power(self):
+        return self.get_percent()
+    
+    def scanning_set_power(self, value):
+        self.set_percent(value)
 
-    #     @return float: laser power in %
-    #     """
-    #     return None
+    @property
+    def scanning_power_unit(self):
+        return ''
 
-    # def get_power_setpoint(self):
-    #     """ Current laser power setpoint
-
-    #     @return float: power setpoint in %
-    #     """
-    #     return 0# self.laser.get_power_setpoint()/1000
-        
-    # def get_power_range(self):
-    #     """ Get range for laser power
-
-    #         @return float[2]: range for laser power
-    #     """
-    #     return 0, 100
-
-    # def set_power(self, power):
-    #     """ Set laser power setpoint in %
-
-    #     @param float power: desired laser power
-    #     """
-    #     rng = self.get_power_range()
-    #     if rng[0]<=power<=rng[1]:
-    #         self.laser.write_intensity(power)
-    #     else:
-    #         raise ValueError('Requested power above maximum configured value')
-
-    # def get_current_unit(self):
-    #     """ Get unit for current
-
-    #     return str: unit for laser current
-    #     """
-    #     return '%'
-
-    # def get_current_range(self):
-    #     """ Get range for laser current
-
-    #         @return float[2]: range for laser current
-    #     """
-    #     return 0, 100
-
-    # def get_current(self):
-    #     """ Get current laser current
-
-    #     @return float: current laser current
-    #     """
-    #     self.laser.read()
-    #     return self.laser.get_intensity()
-
-    # def get_current_setpoint(self):
-    #     """ Get laser current setpoint
-
-    #     @return float: laser current setpoint
-    #     """
-    #     return self.laser.get_intensity()
-
-    # def set_current(self, current):
-    #     """ Set laser current setpoint
-
-    #     @param float current_percent: desired laser current setpoint
-    #     @return float: actual laer current setpoint
-    #     """
-    #     rng = self.get_current_range()
-    #     if rng[0]<=current<=rng[1]:
-    #         self.laser.write_intensity(current)
-    #     else:
-    #         raise ValueError("Requested current outside current range")
-
+    @property
+    def scanning_power_name(self):
+        return 'Percent'
+    
     def get_percent(self):
         """ Get current laser current
 
