@@ -213,7 +213,7 @@ class FunctionCatalog(QtCore.QObject):
                 self.spectrometer_logic().stop()
                 return
             if data_type=='spectrum':
-                self.spectrometer_logic().save_all_data(root_dir=self.folder_path,metadata=self._metadata)
+                self.spectrometer_logic().save_spectrum_data(root_dir=self.folder_path,metadata=self._metadata)
             elif data_type=='background':
                 self.spectrometer_logic().save_spectrum_data(background=True,root_dir=self.folder_path,metadata=self._metadata)
             self.sigFuncComplete.emit(f"Recorded {self.spectrometer_logic().number_spectra} {data_type} "
