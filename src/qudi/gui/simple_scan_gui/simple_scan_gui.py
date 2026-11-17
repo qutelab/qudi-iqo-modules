@@ -296,6 +296,8 @@ class SimpleScanGui(GuiBase):
     def _update_scan_parameters(self, params):
         """Reflect parameter changes emitted by the logic."""
         self._mw.control_dockwidget.set_scan_parameters(params)
+        if 'scan_order' in params:
+            self._update_scan_data()
 
     @QtCore.Slot(str)
     def _update_device_select(self,device):
@@ -308,10 +310,10 @@ class SimpleScanGui(GuiBase):
         """Refresh both plots from the current logic data arrays."""
         logic = self._simple_scan_logic()
 
-        try:
+        if logic.show_FB_separate and logic.scan_order == 'Forward_Backward':
+            signal_data = logic.signal_data_FB
+        else:
             signal_data = logic.signal_data
-        except (AttributeError, TypeError):
-            signal_data = None
 
         try:
             raw_data = logic.raw_data
@@ -351,7 +353,7 @@ class SimpleScanGui(GuiBase):
             x_values=getattr(logic, 'x_data', None),
         )
 
-    @QtCore.Slot()
+    @QtCore.Slot(object, int, int)
     def _update_fit_results(self,fit_results,xidx,yidx):
         self._mw.plot_widget.update_fit_curve(fit_results)
 

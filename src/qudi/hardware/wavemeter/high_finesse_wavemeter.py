@@ -300,7 +300,10 @@ class HighFinesseWavemeter(DataInStreamInterface):
         return data, timestamp
 
     def read_last_value_1CH(self):
-        return self.read_single_point()[0][-1]
+        return self.read_data()[0][-1]
+
+    def get_wavelength(self):  #Stream independent get single wavelength.
+        return self._proxy().get_wavelength()
 
     @property
     def sample_rate(self) -> float:

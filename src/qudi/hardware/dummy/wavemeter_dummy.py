@@ -65,7 +65,7 @@ class WavemeterDummy(DataInStreamInterface):
         self._active_channels: List[str] = []
         self._channel_units: Dict[str, str] = {}
         self._channel_buffer_size = 1024**2
-        self._sample_rate = 10.0
+        self._sample_rate = 100.0
         self._stream_start: Optional[float] = None
         self._generated_samples = 0
         self._sample_buffer: Deque[Tuple[np.ndarray, float]] = deque()

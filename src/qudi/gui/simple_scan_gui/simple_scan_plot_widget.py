@@ -83,8 +83,12 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         self.average_plot.setLabel('left', 'Signal')
         self.average_plot.showGrid(x=True, y=True, alpha=0.5)
         self.average_plot.setMinimumHeight(200)
+        self._average_legend = self.average_plot.addLegend()
+        self._average_legend.setVisible(False)
+        self._backward_curve = self.average_plot.plot(pen=pg.mkPen(color=(80, 200, 255), width=1))
         self.average_plot.fit_plot = self.average_plot.plot()
         self.average_plot.fit_plot.setPen(pg.mkPen(color='orange'))
+        self._backward_fit_plot = self.average_plot.plot(pen=pg.mkPen(color=(255, 100, 180)))
         main_layout.addWidget(self.average_plot, 1,0)
 
         fit_layout = QtWidgets.QVBoxLayout()
@@ -229,7 +233,8 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         Parameters
         ----------
         signal_data : ndarray or None
-            Shape ``(n_points, n_channels)`` — the averaged scan data.
+            Shape ``(n_points, n_channels)`` for a combined average, or
+            ``(n_points, n_channels, 2)`` for forward and backward averages.
         raw_data : ndarray or None
             Shape ``(n_scans, n_points, n_channels)`` — all individual scan lines.
         x_extent : (float, float) or None
@@ -260,57 +265,76 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
         self._prev_xi = xi
         self._prev_yi = yi
         self.update_fit_curve(None)  #If data changes, clear fit plot
-        if (signal_data is not None
-                and signal_data.ndim == 2
-                and signal_data.shape[1] > max(xi, yi)):
-            x_sig = signal_data[:, xi]
-            y_sig = signal_data[:, yi]
-            valid = np.isfinite(x_sig) & np.isfinite(y_sig)
-            if valid.any():
-                self.average_plot.data = (x_sig[valid], y_sig[valid])
-                # When the selected channel changes, re-enable y auto-range so
-                # the new data always fits in view (a previous user zoom may
-                # have disabled it).
+        self._average_legend.clear()
+        self._average_legend.setVisible(False)
+        self._backward_curve.setData([], [])
+        valid_shape = (signal_data is not None
+                       and signal_data.ndim in (2, 3)
+                       and signal_data.shape[1] > max(xi, yi)
+                       and (signal_data.ndim == 2 or signal_data.shape[2] == 2))
+        if not valid_shape:
+            self.average_plot.data = None
+        else:
+            separate = signal_data.ndim == 3
+            curves = signal_data if separate else signal_data[:, :, np.newaxis]
+            x_values_valid = []
+            for direction in range(curves.shape[2]):
+                x_sig = curves[:, xi, direction]
+                y_sig = curves[:, yi, direction]
+                valid = np.isfinite(x_sig) & np.isfinite(y_sig)
+                if direction == 0:
+                    self.average_plot.data = (x_sig[valid], y_sig[valid]) if valid.any() else None
+                elif valid.any():
+                    self._backward_curve.setData(x_sig[valid], y_sig[valid])
+                if valid.any():
+                    x_values_valid.append(x_sig[valid])
+
+            if separate:
+                if self.average_plot._curve is not None:
+                    self._average_legend.addItem(self.average_plot._curve, 'Forward')
+                self._average_legend.addItem(self._backward_curve, 'Backward')
+                self._average_legend.setVisible(True)
+            if x_values_valid:
                 if channel_changed:
                     self.average_plot.getViewBox().enableAutoRange(axis='y')
-                # Set x-range explicitly.  x_extent comes from the configured
-                # scan range (column 0), so only use it when the average plot
-                # is also showing column 0; otherwise derive from the data.
                 if xi == 0 and x_extent is not None:
-                    self.average_plot.setXRange(
-                        float(x_extent[0]), float(x_extent[1]), padding=0.05
-                    )
+                    x_min, x_max = x_extent
                 else:
-                    self.average_plot.setXRange(
-                        float(x_sig[valid].min()), float(x_sig[valid].max()),
-                        padding=0.05
-                    )
-            else:
-                self.average_plot.data = None
-        else:
-            self.average_plot.data = None
+                    x_min = min(values.min() for values in x_values_valid)
+                    x_max = max(values.max() for values in x_values_valid)
+                self.average_plot.setXRange(float(x_min), float(x_max), padding=0.05)
 
         # ── 2-D image ─────────────────────────────────────────────────────────
         self._update_image(raw_data, x_extent, x_values)
 
-    def update_fit_curve(self,fit_results=None):
-        if fit_results is not None:
-            fit_result = fit_results.get(f'{self.x_channel_index}-{self.y_channel_index}',None)
-            if fit_result is not None:
-                fit_data = fit_result[1].high_res_best_fit
-                self.average_plot.fit_plot.setData(*fit_data)
-                self.fit_pop = QtWidgets.QDialog()
-                fit_pop_layout = QtWidgets.QVBoxLayout()
-                self.fit_pop.setLayout(fit_pop_layout)
-                fit_pop_text = QtWidgets.QTextEdit()
-                fit_pop_text.setText(fit_result[1].fit_report())
-                fit_pop_text.setReadOnly(True)
-                fit_pop_layout.addWidget(fit_pop_text)
-                self.fit_pop.show()
-            else:
-                self.average_plot.fit_plot.setData([],[])
-        else:
-            self.average_plot.fit_plot.setData([],[])
+    def update_fit_curve(self, fit_results=None):
+        self.average_plot.fit_plot.setData([], [])
+        self._backward_fit_plot.setData([], [])
+        if fit_results is None:
+            return
+        fit_result = fit_results.get(f'{self.x_channel_index}-{self.y_channel_index}', None)
+        if fit_result is None:
+            return
+        separate = isinstance(fit_result, list)
+        results = fit_result if separate else [fit_result]
+        reports = []
+        for direction, result in enumerate(results):
+            if result is None:
+                continue
+            curve = (self.average_plot.fit_plot, self._backward_fit_plot)[direction]
+            curve.setData(*result[1].high_res_best_fit)
+            report = result[1].fit_report()
+            reports.append(f'{"Forward" if direction == 0 else "Backward"}:\n{report}'
+                           if separate else report)
+        if reports:
+            self.fit_pop = QtWidgets.QDialog()
+            fit_pop_layout = QtWidgets.QVBoxLayout()
+            self.fit_pop.setLayout(fit_pop_layout)
+            fit_pop_text = QtWidgets.QTextEdit()
+            fit_pop_text.setText('\n\n'.join(reports))
+            fit_pop_text.setReadOnly(True)
+            fit_pop_layout.addWidget(fit_pop_text)
+            self.fit_pop.show()
 
 
     def update_image_data(self, raw_data, x_extent=None, y_label='Signal', y_unit='',
@@ -336,6 +360,9 @@ class SimpleScanPlotWidget(QtWidgets.QWidget):
     def clear_data(self):
         """Clear both plots."""
         self.average_plot.data = None
+        self._backward_curve.setData([], [])
+        self._average_legend.clear()
+        self._average_legend.setVisible(False)
         self.update_fit_curve(None)
         self._image_item.clear()
         self._mesh_item.setVisible(False)

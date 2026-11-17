@@ -363,6 +363,7 @@ class SimpleScanLogic(LogicBase):
         self._raw_data = None
         self._x_data = None
         self._signal_data = None
+        self._signal_data_FB = None
         
         self._line_counter = 0
         self._point_counter = 0        
@@ -370,6 +371,8 @@ class SimpleScanLogic(LogicBase):
         self._fit_container = None
         self._fit_config_model = None
         self._fit_results = {}
+
+        self.show_FB_separate = True
 
 
 
@@ -424,18 +427,25 @@ class SimpleScanLogic(LogicBase):
             self.laserScanner.set_y_getter(self._powermeter().measure_power, data_labels=['Laser Power', 'Laser Power Unc.'], data_units=['W','W'])
 
         if self._laser_piezo.is_connected:
+            def laser_piezo_get_y():
+                #value = self._wavemeter().read_last_value_1CH()
+                data, timestamps  = self._wavemeter().read_data(self._wavemeter().available_samples+1)  #Ensure last data point is freshly acquired
+                time_cut = (timestamps[-1]-timestamps)<self.time_per  #look at all data taken at same time as scanner acquisition
+                #print(f'WM Taking last {sum(time_cut)}/{len(time_cut)} points.')
+                return np.mean(data[time_cut])
+
             self.laserPiezoScanner = self.ScanDevice('Laser_Piezo',
                     self._laser_piezo().set_piezo_voltage,
-                    self._wavemeter().read_last_value_1CH,
+                    laser_piezo_get_y,
                     data_labels=['Piezo Voltage', 'Wavelength'], # x, y1, y2,...
                     data_units=['V','m'],
                     static_read_parameters={},
-                    static_set_parameters={self._laser().scanning_power_name:(self._laser().scanning_set_power,0,self._laser().scanning_power_unit)}, #'Laser Power': (self._laser().set_power, 1e-6, 'W')},
+                    static_set_parameters={}, # Remove laser power setting due to jumps; self._laser().scanning_power_name:(self._laser().scanning_set_power,0,self._laser().scanning_power_unit)
                     start_function=lambda : (enable_daq_internal_clock(self), self._wavemeter().start_stream()),
                     end_function=lambda : (self._wavemeter().stop_stream()),
                     dependencies=['_laser_piezo','_wavemeter'],
                     parent = self   
-                                                 )
+                )
         
         #This ODMR version just scans frequency manually in CW mode.
 
@@ -625,15 +635,30 @@ class SimpleScanLogic(LogicBase):
 
     @property
     def signal_data(self):
-        return self._signal_data#.copy()
+        return None if self._signal_data is None else self._signal_data.copy()
+
+    @property
+    def signal_data_FB(self):
+        return None if self._signal_data_FB is None else self._signal_data_FB.copy()
+
+    @property
+    def data_header_FB(self):
+        _data_header = []
+        for ii in range(len(self._data_labels)):
+            if ii==0:
+                _data_header.append(f'{self._data_labels[ii]} ({self._data_units[ii]})')
+            else:
+                _data_header.append(f'{self._data_labels[ii]}-F ({self._data_units[ii]})')
+                _data_header.append(f'{self._data_labels[ii]}-B ({self._data_units[ii]})')
+        return _data_header
 
     @property
     def raw_data(self):
-        return self._raw_data#.copy()
+        return self._raw_data.copy()
 
     @property
     def x_data(self):
-        return self._x_data#.copy()
+        return self._x_data.copy()
     
     @property
     def x_range(self):
@@ -833,6 +858,8 @@ class SimpleScanLogic(LogicBase):
             self._data_units = device._data_units + [scanner._channel_units[key.split('-')[0]] for key in self._scanner_channels]
             self._data_header = [f'{self._data_labels[ii]} ({self._data_units[ii]})' for ii in range(len(self._data_labels))]
             self._raw_data = np.full((self._number_scans,len(self._x_data),len(self._data_header)),np.nan)
+            self._signal_data = None
+            self._signal_data_FB = None
             self._fit_results = {}
             self._line_counter=0
             self._point_counter=0
@@ -932,15 +959,27 @@ class SimpleScanLogic(LogicBase):
                 return
                 
     @QtCore.Slot()
-    def _process_data(self): #This just builds the signal (average) data array
+    def _process_data(self): #This builds the signal (average) data array
         data = np.array(self._raw_data)
+        
         mask_incomplete = np.all(np.isfinite(data), axis=(1,2))
         if np.any(mask_incomplete):
             self._signal_data = np.mean(data[mask_incomplete], axis=0)
         else:
             self._signal_data = np.full((data.shape[1], data.shape[2]), np.nan)
+        
+        if self._scan_order=='Forward_Backward':  #For forward-backward scans, show signal for each direction separately.
+            self._signal_data_FB = np.full((data.shape[1], data.shape[2],2), np.nan)
+            for ii in range(2):
+                dataI = data[ii:][::2]
+                mask_incomplete = np.all(np.isfinite(dataI), axis=(1,2))
+                if np.any(mask_incomplete):
+                    self._signal_data_FB[:,:,ii] = np.mean(dataI[mask_incomplete], axis=0)
+        else:
+            self._signal_data_FB = None
 
-    @QtCore.Slot(str, str, int)
+
+    @QtCore.Slot(str, int, int)
     def do_fit(self, fit_config, xidx, yidx):
         """
         Execute the currently configured fit on the measurement data. Optionally on passed data
@@ -949,22 +988,37 @@ class SimpleScanLogic(LogicBase):
             self.log.error(f'Unknown fit configuration "{fit_config}" encountered.')
             return
 
-        if self.signal_data is None:
+        data = self.signal_data
+        if data is None:
             return
-        
-        signal_x_data = self._signal_data[:,xidx]
-        signal_y_data = self._signal_data[:,yidx]
 
-        try:
-            fit_config, fit_result = self._fit_container.fit_data(fit_config, signal_x_data, signal_y_data)
-        except Exception as e:
-            self.log.exception(f'Data fitting failed: {e}')
-            self._fit_results[f'{xidx}-{yidx}'] = None
-
-        if fit_result is not None:
-            self._fit_results[f'{xidx}-{yidx}'] = (fit_config, fit_result)
+        separate = self.show_FB_separate and self._scan_order == 'Forward_Backward'
+        if separate:
+            data = self.signal_data_FB
+            if data is None:
+                return
         else:
-            self._fit_results[f'{xidx}-{yidx}'] = None
+            data = data[:, :, np.newaxis]
+
+        results = []
+        for ii in range(data.shape[2]):
+            signal_x_data = data[:, xidx, ii]
+            signal_y_data = data[:, yidx, ii]
+            if not (np.all(np.isfinite(signal_x_data)) and np.all(np.isfinite(signal_y_data))):
+                results.append(None)
+                continue
+            try:
+                result_config, fit_result = self._fit_container.fit_data(
+                    fit_config, signal_x_data, signal_y_data
+                )
+            except Exception as e:
+                self.log.exception(f'Data fitting failed: {e}')
+                results.append(None)
+                continue
+            results.append((result_config, fit_result) if fit_result is not None else None)
+
+        self._fit_results[f'{xidx}-{yidx}'] = results if separate else results[0]
+
         self.sigFitUpdated.emit(self._fit_results, xidx, yidx)
     
     @QtCore.Slot(str)
@@ -999,21 +1053,25 @@ class SimpleScanLogic(LogicBase):
 
             # Save raw data for channel
             file_path, _, _ = data_storage.save_data(data,
-                                                        metadata=metadata,
-                                                        nametag=nametag,
-                                                        timestamp=timestamp,
-                                                        column_headers=column_headers,
-                                                        column_dtypes=float)
+                                                metadata=metadata,
+                                                nametag=nametag,
+                                                timestamp=timestamp,
+                                                column_headers=column_headers,
+                                                column_dtypes=float)
 
-            # Save signal data
-            
-            #column_headers = self._get_signal_column_headers()
+            # Save signal data        
             nametag = f'{tag}{dev_name}_signal'
             self._process_data()  #Ensure data processing complete.
-            data = self.signal_data
+            if not (self.show_FB_separate and (self._scan_order=='Forward_Backward')):
+                column_headers = self._data_header
+                signal_data = self.signal_data
+            else:
+                column_headers = self.data_header_FB
+                signal_data = self.signal_data_FB
+                signal_data = signal_data.reshape((signal_data.shape[0],signal_data.shape[1]*signal_data.shape[2]))
 
-            if self._signal_data is not None:
-                data_storage.save_data(data,
+            if signal_data is not None:
+                data_storage.save_data(signal_data,
                                    metadata=metadata,
                                    nametag=nametag,
                                    timestamp=timestamp,
@@ -1041,33 +1099,64 @@ class SimpleScanLogic(LogicBase):
 
         x_data = self._raw_data[0,:,0]  #For 2D plot, x_axis needs to be constant, so used the fixed parameter. Signal plot can show selected x-axis
         y_data = self._raw_data[...,yidx]  #[:, :self._elapsed_sweeps]
-        signal_x_data = self._signal_data[:,xidx]
-        signal_y_data = self._signal_data[:,yidx]
 
+        if not (self.show_FB_separate and (self._scan_order=='Forward_Backward')):
+            signal_data = self.signal_data.reshape((*self.signal_data.shape,1))
+            labels=[None]
 
-        if f'{xidx}-{yidx}' in self._fit_results:
-             fit_result = self._fit_results[f'{xidx}-{yidx}']
-             if fit_result is not None:
-                 fit_x, fit_y = fit_result[1].high_res_best_fit
+            if f'{xidx}-{yidx}' in self._fit_results:
+                fit_result = [self._fit_results[f'{xidx}-{yidx}']]
+            else:
+                fit_result = [None]
         else:
-            fit_result = None
+            signal_data = self.signal_data_FB
+            labels=['Forward','Backward']
 
-        # Determine SI unit scaling for signal
-        scaled = ScaledFloat(np.max(signal_x_data))
-        signal_xunit_prefix = scaled.scale
-        if signal_xunit_prefix:
-            signal_x_data = signal_x_data / scaled.scale_val
-            if fit_result is not None:
-                fit_x = fit_x / scaled.scale_val
-        signal_xlabel = f'{self._data_labels[xidx]} ({signal_xunit_prefix}{self._data_units[xidx]})'
+            if f'{xidx}-{yidx}' in self._fit_results:
+                fit_result = self._fit_results[f'{xidx}-{yidx}']
+            else:
+                fit_result = [None]*signal_data.shape[-1]
 
-        scaled = ScaledFloat(np.max(signal_y_data))
-        signal_yunit_prefix = scaled.scale
-        if signal_yunit_prefix:
-            signal_y_data = signal_y_data / scaled.scale_val
-            if fit_result is not None:
-                fit_y = fit_y / scaled.scale_val
-        signal_ylabel = f'{self._data_labels[yidx]} ({signal_yunit_prefix}{self._data_units[yidx]})'
+        # Create figure
+        fig, (ax_signal, ax_raw) = plt.subplots(nrows=2, ncols=1)
+        for ii in range(signal_data.shape[-1]):
+            signal_x_data = signal_data[:,xidx,ii]
+            signal_y_data = signal_data[:,yidx,ii]
+            if fit_result[ii] is not None:
+                fit_x, fit_y = fit_result[ii][1].high_res_best_fit
+
+            # Determine SI unit scaling for signal
+            scaled = ScaledFloat(np.max(signal_x_data))
+            signal_xunit_prefix = scaled.scale
+            if signal_xunit_prefix:
+                signal_x_data = signal_x_data / scaled.scale_val
+                if fit_result[ii] is not None:
+                    fit_x = fit_x / scaled.scale_val
+            signal_xlabel = f'{self._data_labels[xidx]} ({signal_xunit_prefix}{self._data_units[xidx]})'
+
+            scaled = ScaledFloat(np.max(signal_y_data))
+            signal_yunit_prefix = scaled.scale
+            if signal_yunit_prefix:
+                signal_y_data = signal_y_data / scaled.scale_val
+                if fit_result[ii] is not None:
+                    fit_y = fit_y / scaled.scale_val
+            signal_ylabel = f'{self._data_labels[yidx]} ({signal_yunit_prefix}{self._data_units[yidx]})'
+
+
+            # plot signal data
+            ax_signal.plot(signal_x_data, signal_y_data, linestyle=':', linewidth=0.5, marker='o',label=labels[ii])
+            # Include fit curve if there is one
+            if fit_result[ii] is not None:
+                ax_signal.plot(fit_x, fit_y, marker='None')
+
+        ax_signal.set_xlabel(signal_xlabel)
+        ax_signal.set_ylabel(signal_ylabel)
+        if labels[0]:
+            ax_signal.legend()
+        #ax_signal.set_xlim(min(x_data), max(x_data))
+
+        
+        # plot raw data
 
         # Determine SI unit scaling for raw x-axis
         scaled = ScaledFloat(np.nanmax(x_data))
@@ -1082,20 +1171,6 @@ class SimpleScanLogic(LogicBase):
         if y_unit_prefix:
             y_data = y_data / scaled.scale_val
         y_label = f'{self._data_labels[yidx]} ({y_unit_prefix}{self._data_units[yidx]})'
-
-        # Create figure
-        fig, (ax_signal, ax_raw) = plt.subplots(nrows=2, ncols=1)
-
-        # plot signal data
-        ax_signal.plot(signal_x_data, signal_y_data, linestyle=':', linewidth=0.5, marker='o')
-        # Include fit curve if there is one
-        if fit_result is not None:
-            ax_signal.plot(fit_x, fit_y, marker='None')
-        ax_signal.set_xlabel(signal_xlabel)
-        ax_signal.set_ylabel(signal_ylabel)
-        ax_signal.set_xlim(min(x_data), max(x_data))
-
-        # plot raw data
         y_data_plot = ax_raw.imshow(y_data,
                                       cmap=plt.get_cmap('inferno'),
                                       origin='lower',
