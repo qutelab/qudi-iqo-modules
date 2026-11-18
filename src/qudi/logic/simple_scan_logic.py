@@ -1087,6 +1087,8 @@ class SimpleScanLogic(LogicBase):
                     fig_path = f"{file_path.rsplit('_raw.', 1)[0]}_{self._data_labels[idx]}"
                     fig = self._draw_figure(0, idx)
                     data_storage.save_thumbnail(fig, file_path=fig_path)
+
+            return file_path
             
 
     def _draw_figure(self, xidx, yidx):

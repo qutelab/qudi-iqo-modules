@@ -59,8 +59,6 @@ class SpectrometerLogic(LogicBase):
     _fit_region = StatusVar(name='fit_region', default=[0, 1])
     _axis_type_frequency = StatusVar(name='axis_type_frequency', default=False)
 
-    _fit_config = StatusVar(name='fit_config', default=dict())
-
     # Internal signals
     _sig_get_spectrum = QtCore.Signal(object, object, object, bool)  #Need object to pass None.
     _sig_get_background = QtCore.Signal(object, bool)
@@ -70,6 +68,25 @@ class SpectrometerLogic(LogicBase):
     sig_state_updated = QtCore.Signal()
     sig_fit_updated = QtCore.Signal(str, object)
     sig_acquisition_complete = QtCore.Signal(str)
+
+    _default_fit_configs = (  #__default_fit_configs
+        {'name'             : 'Gaussian',
+         'model'            : 'Gaussian',
+         'estimator'        : 'Peak',
+         'custom_parameters': None},
+         
+        {'name'             : 'Two Gaussians',
+         'model'            : 'DoubleGaussian',
+         'estimator'        : 'Peaks',
+         'custom_parameters': None},
+         
+        {'name'             : 'Three Gaussians',
+         'model'            : 'TripleGaussian',
+         'estimator'        : 'Peaks',
+         'custom_parameters': None},
+    )
+
+    _fit_config = StatusVar(name='fit_config', default=_default_fit_configs)
 
     def __init__(self, **kwargs):
         """ Create SpectrometerLogic object with connectors.
@@ -553,6 +570,7 @@ class SpectrometerLogic(LogicBase):
             ds.save_thumbnail(figure, file_path=file_path.rsplit('.', 1)[0])
 
         self.log.info(f'Spectrum saved to:{file_path}')
+        return file_path
 
         
 

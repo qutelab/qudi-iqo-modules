@@ -122,3 +122,5 @@ class PicoWorker(QtCore.QObject):
 
         fig_path = f"{file_path.rsplit('_raw.', 1)[0]}"
         data_storage.save_thumbnail(figure, file_path=fig_path)
+
+        return file_path

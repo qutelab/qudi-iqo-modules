@@ -84,12 +84,25 @@ class SpectrometerDummy(SpectrometerInterface):
 
             @return ndarray: 1024-value ndarray containing wavelength and intensity of simulated spectrum
         """
+
+        def gaussian_pdf(x, mu=0.0, sigma=1.0):
+            coefficient = 1.0 / (sigma * np.sqrt(2 * np.pi))
+            exponent = -0.5 * ((x - mu) / sigma) ** 2
+            return coefficient * np.exp(exponent)
+        
         length = 1024
 
         self.load_calibration()
         data = np.empty((2, length), dtype=np.double)
         data[0] = self.wavelengths
-        data[1] = np.random.uniform(0, 2000, length)
+        data[1] = np.random.normal(1000, 100, length)
+
+        peak = gaussian_pdf(data[0], data[0][len(data[0])//3], 0.2e-9)
+        peak *= 1/np.max(peak) *500
+        data[1] += peak
+        peak = gaussian_pdf(data[0], data[0][len(data[0])*2//3], 0.06e-9)
+        peak *= 1/np.max(peak) *200
+        data[1] += peak
 
         # lorentz, params = self._fitLogic.make_multiplelorentzian_model(no_of_functions=4)
         # sigma = 0.05
