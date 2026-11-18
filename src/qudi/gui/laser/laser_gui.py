@@ -199,9 +199,9 @@ class LaserGui(GuiBase):
         percent_supported = ControlMode.PERCENT in modes
         for mode, button in self.control_dock_widget.mode_buttons.items():
             button.setVisible(mode in modes)
-        self.control_dock_widget.power_group.setVisible(power_supported)
-        self.control_dock_widget.current_group.setVisible(current_supported)
-        self.control_dock_widget.percent_group.setVisible(percent_supported)
+        self.control_dock_widget.set_power_groups_visible(
+            power_supported, current_supported, percent_supported
+        )
         self.control_dock_widget.piezo_group.setVisible(logic.has_piezo)
         if power_supported:
             self.control_dock_widget.power_slider.setRange(*logic.power_range)

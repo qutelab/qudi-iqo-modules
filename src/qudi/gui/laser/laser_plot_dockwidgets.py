@@ -104,11 +104,12 @@ class LaserTemperatureDockWidget(AdvancedDockWidget):
         self.plot_widget.hideButtons()
         self.plot_widget.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.plot_widget.setMinimumSize(200, 200)
+        self.plot_widget.addLegend()
         self.temperature_data_items = dict()
         for ii, name in enumerate(curve_names):
             color = getattr(palette, 'c{0:d}'.format((ii % 6) + 1))
             self.temperature_data_items[name] = pg.PlotCurveItem(pen=pg.mkPen(color, cosmetic=True),
-                                                                 antialias=True)
+                                                                 antialias=True, name=name)
             self.plot_widget.addItem(self.temperature_data_items[name])
         self.setWidget(self.plot_widget)
         self.plot_widget.getPlotItem().setContentsMargins(0, 1, 5, 2)

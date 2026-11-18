@@ -125,8 +125,12 @@ class SimpleLaserDummy(SimpleLaserInterface):
 
         @param float power: power to set
         """
-        self.power_setpoint = power
-        self.current_setpoint = math.sqrt(4*self.power_setpoint)*100
+        rng = self.get_power_range()
+        if rng[0]<=power<=rng[1]:
+            self.power_setpoint = power
+            self.current_setpoint = math.sqrt(4*self.power_setpoint)*100
+        else:
+            raise ValueError('Requested power above maximum configured value')
 
     def get_current_unit(self):
         """ Get unit for laser current.
@@ -161,8 +165,38 @@ class SimpleLaserDummy(SimpleLaserInterface):
 
         @param float current: desired laser current setpoint
         """
-        self.current_setpoint = current
-        self.power_setpoint = math.pow(self.current_setpoint/100, 2) / 4
+        rng = self.get_current_range()
+        if rng[0]<=current<=rng[1]:
+            self.current_setpoint = current
+            self.power_setpoint = math.pow(self.current_setpoint/100, 2) / 4
+        else:
+            raise ValueError('Requested current above maximum configured value')
+
+    
+    def get_percent(self):
+        """ Get current laser current
+
+        @return float: current laser current
+        """
+        return (self.power_setpoint * random.gauss(1, 0.01))/self.get_power_range()[1]*100
+
+    def get_percent_setpoint(self):
+        """ Get laser current setpoint
+
+        @return float: laser current setpoint
+        """
+        return self.get_power_setpoint()/self.get_power_range()[1]*100
+
+    def set_percent(self, percent):
+        """ Set laser current setpoint
+
+        @param float current_percent: desired laser current setpoint
+        @return float: actual laer current setpoint
+        """
+        if 0<=percent<=100:
+            self.power_setpoint = (percent/100*self.get_power_range()[1])
+        else:
+            raise ValueError("Requested percent outside range 0-100")
 
     _piezo_enabled=False
     def get_piezo_enabled(self):
@@ -208,7 +242,7 @@ class SimpleLaserDummy(SimpleLaserInterface):
 
         @return frozenset: set of supported ControlMode enums
         """
-        return frozenset({ControlMode.POWER, ControlMode.CURRENT, ControlMode.POWER_MODULATION, ControlMode.CURRENT_MODULATION})
+        return frozenset({ControlMode.POWER, ControlMode.CURRENT, ControlMode.POWER_MODULATION, ControlMode.CURRENT_MODULATION, ControlMode.PERCENT})
 
     _mode_dict = {  #Aliases to control modes
             'POWER': ControlMode.POWER,

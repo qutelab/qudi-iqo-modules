@@ -34,15 +34,15 @@ class CoboltLaser(SimpleLaserInterface):
         module.Class: 'laser.cobolt_laser.CoboltLaser'
         options:
             interface: 'COM3'
-            maxpower: 40 # in mW
-            maxcurrent: 155 # in mA
+            max_power: 40 # in mW
+            max_current: 155 # in mA
             scanning_mode: POWER  # Choose from POWER, CURRENT for how this device should be scanned by simple_scan_logic
 
     """
 
-    serial_interface = ConfigOption(name='interface', default='COM3', missing='warn')
-    _max_power = ConfigOption(name='maxpower', default=40.0, missing='warn')  #Todo: Update on quteli config file so I can update the format here.
-    _max_current = ConfigOption(name='maxcurrent', default=155.0, missing='warn')
+    serial_interface = ConfigOption(name='interface', missing='error')
+    _max_power = ConfigOption(name='max_power', default=40.0, missing='warn')  #Todo: Update on quteli config file so I can update the format here.
+    _max_current = ConfigOption(name='max_current', default=155.0, missing='warn')
     _scanning_mode = ConfigOption(name='scanning_mode', default='POWER', missing='warn')
 
     def on_activate(self):
@@ -56,7 +56,7 @@ class CoboltLaser(SimpleLaserInterface):
         """
         self.disconnect_laser()
 
-    def connect_laser(self, interface):
+    def connect_laser(self):
         """ Connect to Instrument.
 
             @param str interface: visa interface identifier

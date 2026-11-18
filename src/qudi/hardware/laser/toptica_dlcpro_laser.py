@@ -36,8 +36,8 @@ class DLCPro(SimpleLaserInterface):
         module.Class: 'laser.toptica_dlcpro_laser.DLCPro'
         options:            
             ip_address: 192.168.1.4
-            max_current: 90 # in mA
-            max_piezo_voltage: 75  # in V
+            max_current: 88 # in mA
+            max_piezo_voltage: 140  # in V
             #min_piezo_voltage: 0  # in V, default 0
 
     """

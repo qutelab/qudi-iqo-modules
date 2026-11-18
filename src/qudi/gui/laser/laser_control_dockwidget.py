@@ -35,6 +35,25 @@ class LaserControlDockWidget(AdvancedDockWidget):
     """
     sigControlModeChanged = QtCore.Signal(object)
 
+    def set_power_groups_visible(self, power, current, percent):
+        groups = (
+            (self.power_group, power),
+            (self.current_group, current),
+            (self.percent_group, percent),
+        )
+        for group, visible in groups:
+            group.setVisible(visible)
+
+        layout = self.widget().layout()
+        for group, _ in groups:
+            layout.removeWidget(group)
+        ordered_groups = (
+            [group for group, visible in groups if visible]
+            + [group for group, visible in groups if not visible]
+        )
+        for column, group in enumerate(ordered_groups):
+            layout.addWidget(group, 3, column)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # generate main widget and layout
