@@ -25,7 +25,7 @@ __all__ = ('DoubleGaussian', 'Gaussian', 'Gaussian2D', 'TripleGaussian', 'multip
 import numpy as np
 from qudi.util.fit_models.model import FitModelBase, estimator
 from qudi.util.fit_models.helpers import correct_offset_histogram, smooth_data, sort_check_data
-from qudi.util.fit_models.helpers import estimate_double_peaks, estimate_triple_peaks
+from qudi.util.fit_models.helpers import find_highest_peaks
 from qudi.util.fit_models.linear import Linear
 
 
@@ -56,6 +56,76 @@ def multiple_gaussian(x, centers, sigmas, amplitudes):
                zip(centers, sigmas, amplitudes))
 
 
+def _estimate_n_peaks(data, x, peak_count, minimum_distance=None):
+    peak_indices, peak_heights, peak_widths = find_highest_peaks(data,
+                                                                 peak_count=peak_count,
+                                                                 width=minimum_distance,
+                                                                 height=0.05 * max(data))
+
+    x_spacing = min(abs(np.ediff1d(x)))
+    x_span = abs(x[-1] - x[0])
+    data_span = abs(max(data) - min(data))
+
+    def split_peak(peak_index, peak_height, peak_width, count):
+        separation = peak_width / count
+        offsets = (np.arange(count) - (count - 1) / 2) * separation
+        indices = np.clip(peak_index + offsets, 0, len(x) - 1)
+        return (indices,
+                np.full(count, peak_height / count),
+                np.full(count, peak_width / count))
+
+    if len(peak_indices) == 0:
+        peak_indices = np.arange(1, peak_count + 1) * len(x) // (peak_count + 1)
+        peak_heights = np.full(peak_count, data_span)
+        peak_widths = np.full(peak_count, x_spacing * 10)
+    elif len(peak_indices) == 1:
+        peak_indices, peak_heights, peak_widths = split_peak(
+            peak_indices[0], peak_heights[0], peak_widths[0], peak_count)
+    elif len(peak_indices) == peak_count - 1:
+        widest_peak = int(np.argmax(peak_widths))
+        split_indices, split_heights, split_widths = split_peak(
+            peak_indices[widest_peak],
+            peak_heights[widest_peak],
+            peak_widths[widest_peak],
+            2)
+        peak_indices = np.concatenate((np.delete(peak_indices, widest_peak), split_indices))
+        peak_heights = np.concatenate((np.delete(peak_heights, widest_peak), split_heights))
+        peak_widths = np.concatenate((np.delete(peak_widths, widest_peak), split_widths))
+    elif peak_count % 2 == 0 and len(peak_indices) == peak_count // 2:
+        split_peaks = [split_peak(index, height, width, 2)
+                       for index, height, width in zip(peak_indices, peak_heights, peak_widths)]
+        peak_indices = np.concatenate([peak[0] for peak in split_peaks])
+        peak_heights = np.concatenate([peak[1] for peak in split_peaks])
+        peak_widths = np.concatenate([peak[2] for peak in split_peaks])
+
+    order = np.argsort(peak_indices)
+    peak_indices = np.asarray(peak_indices)[order]
+    peak_heights = np.asarray(peak_heights)[order]
+    peak_widths = np.asarray(peak_widths)[order]
+
+    estimate = {'height': np.asarray(peak_heights),
+                'fwhm'  : np.asarray(peak_widths) * x_spacing,
+                'center': np.interp(peak_indices, np.arange(len(x)), x)}
+    limits = {'height': ((0, 2 * data_span),) * peak_count,
+              'fwhm'  : ((x_spacing, x_span),) * peak_count,
+              'center': ((min(x) - x_span / 2, max(x) + x_span / 2),) * peak_count}
+    print('Estimator:',estimate)
+    return estimate, limits
+
+
+def estimate_double_peaks(data, x, minimum_distance=None):
+    return _estimate_n_peaks(data, x, 2, minimum_distance)
+
+
+def estimate_triple_peaks(data, x, minimum_distance=None):
+    return _estimate_n_peaks(data, x, 3, minimum_distance)
+
+
+def estimate_quad_peaks(data, x, minimum_distance=None):
+    return _estimate_n_peaks(data, x, 4, minimum_distance)
+
+
+smoothQ=False
 class Gaussian(FitModelBase):
     """
     """
@@ -79,8 +149,11 @@ class Gaussian(FitModelBase):
         data_bc  = data - baseline
 
         # Smooth for peak & half-max detection
-        filt      = max(1, round(len(x) / 20))
-        smooth, _ = smooth_data(data_bc, filt)
+        if smoothQ:
+            filt      = 4#max(1, round(len(x) / 20))
+            smooth, _ = smooth_data(data_bc, filt)
+        else:
+            smooth=data_bc
         idx_peak  = int(np.argmax(smooth))
         center    = x[idx_peak]
         amplitude = smooth[idx_peak]
@@ -175,7 +248,10 @@ class DoubleGaussian(FitModelBase):
     @estimator('Peaks')
     def estimate_peaks(self, data, x):
         data, x = sort_check_data(data, x)
-        data_smoothed, filter_width = smooth_data(data)
+        if smoothQ:
+            data_smoothed, filter_width = smooth_data(data,4)
+        else:
+            data_smoothed, filter_width = data,1
         leveled_data_smooth, offset = correct_offset_histogram(data_smoothed,
                                                                bin_width=2 * filter_width)
         estimate, limits = estimate_double_peaks(leveled_data_smooth, x, filter_width)
@@ -243,7 +319,10 @@ class TripleGaussian(FitModelBase):
     @estimator('Peaks')
     def estimate_peaks(self, data, x):
         data, x = sort_check_data(data, x)
-        data_smoothed, filter_width = smooth_data(data)
+        if smoothQ:
+            data_smoothed, filter_width = smooth_data(data,4)
+        else:
+            data_smoothed, filter_width = data,1
         leveled_data_smooth, offset = correct_offset_histogram(data_smoothed,
                                                                bin_width=2 * filter_width)
         estimate, limits = estimate_triple_peaks(leveled_data_smooth, x, filter_width)
@@ -293,6 +372,105 @@ class TripleGaussian(FitModelBase):
         estimate['amplitude_3'].set(value=-estimate['amplitude_3'].value,
                                     min=-estimate['amplitude_3'].max,
                                     max=-estimate['amplitude_3'].min)
+        return estimate
+
+
+
+class QuadGaussian(FitModelBase):
+    """ ToDo: Document
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_param_hint('offset', value=0, min=-np.inf, max=np.inf)
+        self.set_param_hint('amplitude_1', value=0, min=-np.inf, max=np.inf)
+        self.set_param_hint('amplitude_2', value=0, min=-np.inf, max=np.inf)
+        self.set_param_hint('amplitude_3', value=0, min=-np.inf, max=np.inf)
+        self.set_param_hint('amplitude_4', value=0, min=-np.inf, max=np.inf)
+        self.set_param_hint('center_1', value=0., min=-np.inf, max=np.inf)
+        self.set_param_hint('center_2', value=0., min=-np.inf, max=np.inf)
+        self.set_param_hint('center_3', value=0., min=-np.inf, max=np.inf)
+        self.set_param_hint('center_4', value=0., min=-np.inf, max=np.inf)
+        self.set_param_hint('sigma_1', value=0., min=0., max=np.inf)
+        self.set_param_hint('sigma_2', value=0., min=0., max=np.inf)
+        self.set_param_hint('sigma_3', value=0., min=0., max=np.inf)
+        self.set_param_hint('sigma_4', value=0., min=0., max=np.inf)
+
+    @staticmethod
+    def _model_function(x, offset, center_1, center_2, center_3, center_4, sigma_1, sigma_2, sigma_3, sigma_4,
+                        amplitude_1, amplitude_2, amplitude_3, amplitude_4):
+        return offset + multiple_gaussian(x,
+                                          (center_1, center_2, center_3, center_4),
+                                          (sigma_1, sigma_2, sigma_3, sigma_4),
+                                          (amplitude_1, amplitude_2, amplitude_3, amplitude_4))
+
+    @estimator('Peaks')
+    def estimate_peaks(self, data, x):
+        data, x = sort_check_data(data, x)
+        if smoothQ:
+            data_smoothed, filter_width = smooth_data(data,4)
+        else:
+            data_smoothed, filter_width = data,1
+        leveled_data_smooth, offset = correct_offset_histogram(data_smoothed,
+                                                               bin_width=2 * filter_width)
+        estimate, limits = estimate_quad_peaks(leveled_data_smooth, x, filter_width)
+
+        params = self.make_params()
+        params['amplitude_1'].set(value=estimate['height'][0],
+                                min=limits['height'][0][0],
+                                max=limits['height'][0][1])
+        params['amplitude_2'].set(value=estimate['height'][1],
+                                min=limits['height'][1][0],
+                                max=limits['height'][1][1])
+        params['amplitude_3'].set(value=estimate['height'][2],
+                                min=limits['height'][2][0],
+                                max=limits['height'][2][1])
+        params['amplitude_4'].set(value=estimate['height'][3],
+                                min=limits['height'][3][0],
+                                max=limits['height'][3][1])
+        params['center_1'].set(value=estimate['center'][0],
+                                min=limits['center'][0][0],
+                                max=limits['center'][0][1])
+        params['center_2'].set(value=estimate['center'][1],
+                                min=limits['center'][1][0],
+                                max=limits['center'][1][1])
+        params['center_3'].set(value=estimate['center'][2],
+                                min=limits['center'][2][0],
+                                max=limits['center'][2][1])
+        params['center_4'].set(value=estimate['center'][3],
+                                min=limits['center'][3][0],
+                                max=limits['center'][3][1])
+        params['sigma_1'].set(value=estimate['fwhm'][0] / 2.3548,
+                                min=limits['fwhm'][0][0] / 2.3548,
+                                max=limits['fwhm'][0][1] / 2.3548)
+        params['sigma_2'].set(value=estimate['fwhm'][1] / 2.3548,
+                                min=limits['fwhm'][1][0] / 2.3548,
+                                max=limits['fwhm'][1][1] / 2.3548)
+        params['sigma_3'].set(value=estimate['fwhm'][2] / 2.3548,
+                                min=limits['fwhm'][2][0] / 2.3548,
+                                max=limits['fwhm'][2][1] / 2.3548)
+        params['sigma_4'].set(value=estimate['fwhm'][3] / 2.3548,
+                                min=limits['fwhm'][3][0] / 2.3548,
+                                max=limits['fwhm'][3][1] / 2.3548)
+        return params
+
+    @estimator('Dips')
+    def estimate_dips(self, data, x):
+        estimate = self.estimate_peaks(-data, x)
+        estimate['offset'].set(value=-estimate['offset'].value,
+                               min=-estimate['offset'].max,
+                               max=-estimate['offset'].min)
+        estimate['amplitude_1'].set(value=-estimate['amplitude_1'].value,
+                                min=-estimate['amplitude_1'].max,
+                                max=-estimate['amplitude_1'].min)
+        estimate['amplitude_2'].set(value=-estimate['amplitude_2'].value,
+                                min=-estimate['amplitude_2'].max,
+                                max=-estimate['amplitude_2'].min)
+        estimate['amplitude_3'].set(value=-estimate['amplitude_3'].value,
+                                min=-estimate['amplitude_3'].max,
+                                max=-estimate['amplitude_3'].min)
+        estimate['amplitude_3'].set(value=-estimate['amplitude_4'].value,
+                                min=-estimate['amplitude_4'].max,
+                                max=-estimate['amplitude_4'].min)
         return estimate
 
 

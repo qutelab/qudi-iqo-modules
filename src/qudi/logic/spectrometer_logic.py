@@ -84,6 +84,11 @@ class SpectrometerLogic(LogicBase):
          'model'            : 'TripleGaussian',
          'estimator'        : 'Peaks',
          'custom_parameters': None},
+         
+        {'name'             : 'Four Gaussians',
+         'model'            : 'QuadGaussian',
+         'estimator'        : 'Peaks',
+         'custom_parameters': None},
     )
 
     _fit_config = StatusVar(name='fit_config', default=_default_fit_configs)

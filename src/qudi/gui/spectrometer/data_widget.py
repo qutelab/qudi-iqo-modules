@@ -101,9 +101,10 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
 
         h_layout.addStretch()
         main_layout.addLayout(h_layout, 1, 0, 1, 2)
+        main_layout.setRowStretch(2,1)
 
         self.fit_widget = FitWidget()
-        main_layout.addWidget(self.fit_widget, 0, 2, 2, 1)
+        main_layout.addWidget(self.fit_widget, 0, 2, 3, 1)
 
         #icon_path = os.path.join(get_artwork_dir(), 'icons')
         #fit_settings_icon = QtGui.QIcon(os.path.join(icon_path, 'configure'))
@@ -143,7 +144,7 @@ class SpectrometerDataWidget(QtWidgets.QWidget):
         self.plot_widget.setLabel('left', 'Intensity', units='counts')
         self.plot_widget.setLabel('bottom', 'Wavelength', units='m')
         self.plot_widget.setMinimumHeight(300)
-        main_layout.addWidget(self.plot_widget, 2, 0, 1, 3)
+        main_layout.addWidget(self.plot_widget, 3, 0, 1, 3)
 
 
 class CustomAxis(pg.AxisItem):

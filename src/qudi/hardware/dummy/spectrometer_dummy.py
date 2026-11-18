@@ -95,14 +95,13 @@ class SpectrometerDummy(SpectrometerInterface):
         self.load_calibration()
         data = np.empty((2, length), dtype=np.double)
         data[0] = self.wavelengths
-        data[1] = np.random.normal(1000, 100, length)
+        data[1] = np.random.normal(1000, 10, length)
 
-        peak = gaussian_pdf(data[0], data[0][len(data[0])//3], 0.2e-9)
-        peak *= 1/np.max(peak) *500
-        data[1] += peak
-        peak = gaussian_pdf(data[0], data[0][len(data[0])*2//3], 0.06e-9)
-        peak *= 1/np.max(peak) *200
-        data[1] += peak
+        peaks = [[250,5,100],[255,5,100],[650,5,100],[680,5,100],]   # Bin location, width in bins, absolute height
+        for loc,width,height in peaks:
+            peak = gaussian_pdf(data[0], data[0][loc], (data[0,1]-data[0,0])*width*0.42466)
+            peak *= 1/np.max(peak) * height
+            data[1] += peak
 
         # lorentz, params = self._fitLogic.make_multiplelorentzian_model(no_of_functions=4)
         # sigma = 0.05
