@@ -47,7 +47,7 @@ from time import sleep
 # ---------------------- FUNCTION CATALOG ----------------------
 class FunctionCatalog(QtCore.QObject):
     sigFuncComplete = QtCore.Signal(str)  #Emits log string when function completes, can be connected to log_result in ScriptBuilderGUI
-    _sigInterrupt = QtCore.Signal()  #This should only be used internally as it's globally disconnected regularly.
+    sigInterrupt = QtCore.Signal()  #This should only be used internally as it's globally disconnected regularly.
 
     def __init__(self, parent):  #Parent required to access logic modules
         super().__init__(parent)
@@ -61,7 +61,7 @@ class FunctionCatalog(QtCore.QObject):
 
     def finish(self,interrupt=False):  #Call interrupt, disconnect all signals then reinitialize.
         if interrupt:
-            self._sigInterrupt.emit()
+            self.sigInterrupt.emit()
         sleep(0.1)
         self._func_running=False
 
@@ -156,7 +156,7 @@ class FunctionCatalog(QtCore.QObject):
         self._start_position = [self.scanning_logic().scanner_position[coord] for coord in ['x','y','z']]
         self.optimize_logic().start_optimize()
         self.optimize_logic().sigOptimizeStateChanged.connect(self.finish_optimize, Qt.QueuedConnection)
-        self._sigInterrupt.connect(lambda : self.finish_optimize(interrupted=True), Qt.QueuedConnection)
+        self.sigInterrupt.connect(lambda : self.finish_optimize(interrupted=True), Qt.QueuedConnection)
         
     def finish_optimize(self,state=None, pos=None, fit=None, interrupted=False):  #Slot needs to receive all objects from signal.
         with self._finish_lock:
@@ -170,7 +170,7 @@ class FunctionCatalog(QtCore.QObject):
                 return
             try:
                 self.optimize_logic().sigOptimizeStateChanged.disconnect(self.finish_optimize)
-                self._sigInterrupt.disconnect()
+                self.sigInterrupt.disconnect()
             except:
                 pass 
             if interrupted:
@@ -198,7 +198,7 @@ class FunctionCatalog(QtCore.QObject):
             self.spectrometer_logic().number_background = number_spectra
             self.spectrometer_logic().run_get_background()
         self.spectrometer_logic().sig_acquisition_complete.connect(self.finish_record_spectrum, Qt.QueuedConnection)
-        self._sigInterrupt.connect(lambda : self.finish_record_spectrum(interrupted=True), Qt.QueuedConnection)
+        self.sigInterrupt.connect(lambda : self.finish_record_spectrum(interrupted=True), Qt.QueuedConnection)
     
     def finish_record_spectrum(self,data_type=None, interrupted=False): 
         #if (self.spectrometer_logic().acquisition_running):
@@ -206,7 +206,7 @@ class FunctionCatalog(QtCore.QObject):
         with self._finish_lock:
             try:
                 self.spectrometer_logic().sig_acquisition_complete.disconnect(self.finish_record_spectrum)
-                self._sigInterrupt.disconnect()
+                self.sigInterrupt.disconnect()
             except: 
                 pass
             if interrupted:
@@ -245,7 +245,7 @@ class FunctionCatalog(QtCore.QObject):
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
-        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
+        self.sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
 
     @register(dep='simple_scan_logic', params={
         "x_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
@@ -272,7 +272,7 @@ class FunctionCatalog(QtCore.QObject):
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
-        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
+        self.sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)  
   
     @register(dep='simple_scan_logic', params={
         "t_start": {"type": float, "default": lambda ctx: ctx.simple_scan_logic().x_range[0]}, 
@@ -301,7 +301,7 @@ class FunctionCatalog(QtCore.QObject):
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection) #Same process for ending
-        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)    
+        self.sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)    
     
     @register(dep='simple_scan_logic', params={
         "scan_device": {"type": [str], "entries": lambda ctx: ctx.simple_scan_logic().device_dict, 
@@ -328,13 +328,13 @@ class FunctionCatalog(QtCore.QObject):
         
         self.simple_scan_logic().start_scan()
         self.simple_scan_logic().sigScanComplete.connect(self.finish_record_scan, Qt.QueuedConnection)
-        self._sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)
+        self.sigInterrupt.connect(lambda : self.finish_record_scan(interrupted=True), Qt.QueuedConnection)
 
     def finish_record_scan(self, scan_success=False, interrupted=False):
         with self._finish_lock:
             try:
                 self.simple_scan_logic().sigScanComplete.disconnect(self.finish_record_scan)
-                self._sigInterrupt.disconnect()
+                self.sigInterrupt.disconnect()
             except: 
                 pass
             if interrupted:
@@ -358,7 +358,7 @@ class FunctionCatalog(QtCore.QObject):
         self.positioner_logic().set_offset_voltage(axis, offset_voltage)
         if number_steps>0:
             self.positioner_logic().sigActivityChanged.connect(self.finish_positioner, Qt.QueuedConnection)
-            self._sigInterrupt.connect(lambda : self.finish_positioner(interrupted=True), Qt.QueuedConnection) 
+            self.sigInterrupt.connect(lambda : self.finish_positioner(interrupted=True), Qt.QueuedConnection) 
             self.positioner_logic().set_step_voltage(axis,step_voltage)
             self.positioner_logic().set_step_freq(axis,frequency)
             if direction=='Up':
@@ -373,7 +373,7 @@ class FunctionCatalog(QtCore.QObject):
             if state:
                 return  #Move not complete
             try:
-                self._sigInterrupt.disconnect()
+                self.sigInterrupt.disconnect()
                 self.positioner_logic().sigActivityChanged.disconnect(self.finish_positioner)
             except: 
                 pass
@@ -392,7 +392,7 @@ class FunctionCatalog(QtCore.QObject):
         self.picoharp.max_time = max_time
 
         self.picoharp.sigWorkerFinished.connect(self.finish_measure_lifetime, Qt.QueuedConnection)
-        self._sigInterrupt.connect(lambda : self.picoharp._thread.requestInterrupt())
+        self.sigInterrupt.connect(lambda : self.picoharp._thread.requestInterrupt())
         self.picoharp.sigAcquireData.emit()
         #self.sigInterrupt.connect(self.spectrometer_logic().stop)  # Tell interrupt signal how to stop function
 
@@ -401,7 +401,7 @@ class FunctionCatalog(QtCore.QObject):
             return  # State update signals will be emitted before finished.
         self._func_running = False
         # print('Finish spectrum')
-        self._sigInterrupt.disconnect()
+        self.sigInterrupt.disconnect()
         self.picoharp.sigWorkerFinished.disconnect()
         if error is not None:
             self.log.error(f'Error during lifetime measurement: {error}')
@@ -441,6 +441,36 @@ class FunctionCatalog(QtCore.QObject):
             else:
                 self.parent._mw.loop_progress.reset()
             self.sigFuncComplete.emit(f"Finished loop of {loop[0]} iterations")
+
+    _grid_break_start = 0
+    @register()
+    def GRID_BREAK(self):
+        #Handled by loop logic
+        self.sigFuncComplete.emit('')
+
+    _delay_active=False
+    @register(params={"delay_time": {"type": float, "default": 1}})
+    def DELAY(self, delay_time):
+        if delay_time>0:
+            self._delay_active=True
+            self.sigInterrupt.connect(lambda: self.finish_delay(True))
+            QtCore.QTimer.singleShot(int(delay_time*1000), lambda: self.finish_delay(False))
+
+    def finish_delay(self, interrupted=True):
+        if not self._delay_active:
+            return
+
+        self._delay_active=False
+        self.sigInterrupt.disconnect()
+        if interrupted:
+            self.sigFuncComplete.emit('Delay interrupted')
+        else:
+            self.sigFuncComplete.emit('Delay complete')
+
+
+
+
+
 
     ### TODO: scanner_gui, x,y, and/or z scans
         
@@ -820,6 +850,7 @@ class ScriptBuilder(QMainWindow):
         """Number of step executions for one coordinate, expanding (nested) loops."""
         multipliers = [1]
         total = 0
+        grid_break_N=0
         for entry in self.script:
             if entry["name"] == "LOOP_END":
                 total += multipliers[-1]
@@ -832,9 +863,12 @@ class ScriptBuilder(QMainWindow):
                 except (TypeError, ValueError):
                     count = 1
                 multipliers.append(multipliers[-1]*max(count, 1))
+            elif entry["name"] == "GRID_BREAK":
+                grid_break_N+=1
+                total += multipliers[-1]
             else:
                 total += multipliers[-1]
-        return total
+        return total, grid_break_N
 
     def start_script(self):
         if len(self.script)==0:
@@ -865,13 +899,20 @@ class ScriptBuilder(QMainWindow):
         self._refresh_script_order()
         self._set_running(True)
 
-        total = len(self._coordinate_list)*self._steps_per_coordinate()
+        steps_per_coordinate,grid_break_N = self._steps_per_coordinate() 
+        if len(self._coordinate_list)>1:
+            total = len(self._coordinate_list)*steps_per_coordinate-grid_break_N
+        else:
+            total = steps_per_coordinate
+
         self.progress.setMaximum(max(total, 1))
         self._steps_done = 0
         self.catalog._loop_list.clear()  #Drop loops left over from an interrupted run
         
         self._current_coord_idx = 0
         self._current_script_idx = 0
+        self._grid_break_start_idx=0
+        self._grid_break_enabled=False
 
         self.log_result(f'Starting scan of {len(self._coordinate_list)} coordinates:')
         #for ii,coords in enumerate(self._coordinate_list):
@@ -880,7 +921,7 @@ class ScriptBuilder(QMainWindow):
         self.catalog.sigFuncComplete.connect(self.next_script_step, Qt.QueuedConnection)  #Connect function completion signal to next step
         
         self._continue_possible = True
-        self.next_script_step()  #Start first step
+        self.next_script_step(no_increment=True)  #Start first step
 
     @QtCore.Slot()
     def continue_script(self):
@@ -897,55 +938,67 @@ class ScriptBuilder(QMainWindow):
                     self._current_script_idx = len(self.script)-1
             else:
                 self._current_script_idx+=-1
-            self.next_script_step()
+            self.next_script_step(no_increment=True)
 
+    
 
     @QtCore.Slot()
-    def next_script_step(self, result=None):
+    def next_script_step(self, result=None, no_increment=False):
+        if not self._running: return  # Something called this after script was stopped, ignore.
         try:
-            self.progress.setValue(self._steps_done)
             if result is not None:
                 self.log_result(result)
 
-            if not self._running: return  # Something called this after script was stopped, ignore.
+            if not no_increment:
+                self._steps_done += 1
+                self._current_script_idx += 1
+                if (self._current_script_idx < len(self.script)):
+                    grid_break = (self.script[self._current_script_idx]['name']=='GRID_BREAK') and (len(self._coordinate_list)>1)
+                    self._grid_break_enabled = self._grid_break_enabled or grid_break   # Sets to true if any grid_breaks in this script.
+                else:
+                    grid_break=False
 
-            if self._current_script_idx == 0: # Goto location and update lists
+                if (self._current_script_idx >= len(self.script)) or grid_break:
+                    current_idx = self._current_script_idx
+                    self._current_script_idx = self._grid_break_start_idx
+                    self._current_coord_idx += 1
+            self.progress.setValue(self._steps_done)
+            
+                
+            if (self._current_script_idx == self._grid_break_start_idx): # Goto location and update grid_maker lists
                 if self.grid_checkbox.isChecked():
-                    if self._current_coord_idx==0:
-                        self.grid_maker.update_done(None, self.coordinate_list[self._current_coord_idx])
-                    elif self._current_coord_idx < len(self.coordinate_list):
+                    if self._current_coord_idx < len(self.coordinate_list):  #Regular increment to next coordinate
                         self.grid_maker.update_done(self.coordinate_list[:self._current_coord_idx], self.coordinate_list[self._current_coord_idx])
-                    else:
+                    elif grid_break:  #Last coordinate step at grid break, go to next section and reset complete display
+                        self._current_coord_idx=0
+                        self._current_script_idx = current_idx+1 #Go to step after grid_break
+                        self._grid_break_start_idx = current_idx
+                        self.grid_maker.update_done(None, self.coordinate_list[self._current_coord_idx])
+                    else: #Last coordinate at end of script
                         self.grid_maker.update_done(self.coordinate_list[:self._current_coord_idx], None)
-
-                if self._current_coord_idx >= len(self._coordinate_list):
+                
+                if self._current_coord_idx >= len(self._coordinate_list): #needs to be outside grid_maker conditional list
                     self.finish_script()
                     return
-            
+
                 coords = {}
                 coords['x']=self._coordinate_list[self._current_coord_idx][0]
                 coords['y']=self._coordinate_list[self._current_coord_idx][1]
                 coords['z']=self._coordinate_list[self._current_coord_idx][2]
                 self.parent.scanning_logic().set_target_position(coords, move_blocking=True)
                 self.log_result(f'{self._current_coord_idx+1}/{len(self._coordinate_list)} Moved to : {coords}')
-        except Exception as e:
-            self.finish_script(error=e)
-            return
+
         
-        self.script_list.setCurrentRow(self._current_script_idx)
-        QApplication.processEvents()
-        entry = self.script[self._current_script_idx]
-        self.log_result(f'Starting script step: {entry}')
-        try:
+            self.script_list.setCurrentRow(self._current_script_idx)
+            QApplication.processEvents()
+            entry = self.script[self._current_script_idx]
+            self.log_result(f'Starting script step: {entry}')
+
             self.catalog.call(entry, coord_label=self._coord_labels[self._current_coord_idx])
+
         except Exception as e:
             self.finish_script(error=e)
             return
-        self._steps_done += 1
-        self._current_script_idx += 1
-        if self._current_script_idx >= len(self.script):
-            self._current_script_idx = 0
-            self._current_coord_idx += 1
 
 
 
