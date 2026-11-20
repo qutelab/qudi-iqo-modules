@@ -106,6 +106,11 @@ class SimpleScanLogic(LogicBase):
     _sigAcquire = QtCore.Signal(float)
 
     _fit_configs = (  #__default_fit_configs
+        {'name'             : 'Lorentzian',
+         'model'            : 'Lorentzian',
+         'estimator'        : 'Peak',
+         'custom_parameters': None},
+
         {'name'             : 'Lorentzian Dip',
          'model'            : 'Lorentzian',
          'estimator'        : 'Dip',
