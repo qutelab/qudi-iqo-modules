@@ -433,13 +433,15 @@ class SimpleScanLogic(LogicBase):
                 time_cut = (timestamps[-1]-timestamps)<=self.time_per  #look at all data taken at same time as scanner acquisition
                 #print(f'WM Taking last {sum(time_cut)}/{len(time_cut)} points.')
                 data = data[time_cut]
-                return np.mean(data), np.std(data)
+                data_mean, data_std = np.mean(data), np.std(data)
+                data_F = 299_792_458/data_mean
+                return data_mean, data_std, data_F
 
             self.laserPiezoScanner = self.ScanDevice('Laser_Piezo',
                     self._laser_piezo().set_piezo_voltage,
                     laser_piezo_get_y,
-                    data_labels=['Piezo Voltage', 'Wavelength', 'Wavelength Std'], # x, y1, y2,...
-                    data_units=['V','m','m'],
+                    data_labels=['Piezo Voltage', 'Wavelength', 'Wavelength Std', 'Frequency'], # x, y1, y2,...
+                    data_units=['V','m','m','Hz'],
                     static_read_parameters={},
                     static_set_parameters={}, # Remove laser power setting due to jumps; self._laser().scanning_power_name:(self._laser().scanning_set_power,0,self._laser().scanning_power_unit)
                     start_function=lambda : (enable_daq_internal_clock(self), self._wavemeter().start_stream()),

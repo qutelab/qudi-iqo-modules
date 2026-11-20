@@ -864,7 +864,7 @@ class ScriptBuilder(QMainWindow):
                     count = 1
                 multipliers.append(multipliers[-1]*max(count, 1))
             elif entry["name"] == "GRID_BREAK":
-                grid_break_N+=1
+                grid_break_N+=1  #grid_break steps only execute once, not once per cooordinate.
                 total += multipliers[-1]
             else:
                 total += multipliers[-1]
